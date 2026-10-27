@@ -145,6 +145,61 @@ def cmd_run_job(args: argparse.Namespace) -> int:
     return 0 if job["status"] == "ready" else 1
 
 
+def cmd_import_asset(args: argparse.Namespace) -> int:
+    """Import a REAL externally-produced asset (runpod/kiri/manual) with verification.
+
+    Validates the PLY header, copies it under STORAGE_DIR, and records a ready
+    reconstruction job. Never marks ready without a verified artifact.
+    """
+    if not os.path.exists(args.asset):
+        print(f"ASSET NOT FOUND: {args.asset}", file=sys.stderr)
+        return 2
+    with open(args.asset, "rb") as f:
+        header = f.read(1500).decode("ascii", "replace")
+    if not header.startswith("ply\n") or "element vertex" not in header:
+        print(f"NOT A VALID SPLAT PLY: {args.asset}", file=sys.stderr)
+        return 2
+    if os.path.getsize(args.asset) < 1024:
+        print(f"ASSET SUSPICIOUSLY SMALL: {args.asset}", file=sys.stderr)
+        return 2
+    if args.scene:
+        try:
+            scene = store._load("scenes.json")[args.scene]
+        except KeyError:
+            print(f"UNKNOWN SCENE: {args.scene}", file=sys.stderr)
+            return 2
+    else:
+        scene = store.create_scene(args.name, {"importedFrom": os.path.abspath(args.asset)})
+    dest_dir = os.path.join(store.storage_dir(), "assets", scene["id"])
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, os.path.basename(args.asset))
+    if os.path.abspath(args.asset) != os.path.abspath(dest):
+        import shutil
+        shutil.copy2(args.asset, dest)
+    job = store.create_job(scene["id"], "reconstruction")
+    store.transition(job["id"], "uploaded", progress=5)
+    jobs = store._load("jobs.json")
+    jobs[job["id"]]["asset"] = {
+        "assetPath": dest,
+        "format": "ply",
+        "posesPath": args.poses,
+        "posesFormat": args.poses_format,
+    }
+    jobs[job["id"]]["diagnostics"] = {
+        "cameraPosesEstimated": bool(args.poses),
+        "framesRegistered": None,
+        "framesRejected": None,
+        "coverageConcentratedInOneArea": None,
+        "largeGapsOrUnstableRegions": None,
+        "notes": [f"Artifact imported from {os.path.abspath(args.asset)}."],
+    }
+    store._save("jobs.json", jobs)
+    store.transition(job["id"], "compressing", progress=90)
+    job = store.transition(job["id"], "ready", progress=100)
+    print(json.dumps({"sceneId": scene["id"], "jobId": job["id"], "status": "ready"}))
+    return 0
+
+
 def cmd_jobs(_args: argparse.Namespace) -> int:
     print(json.dumps(store.list_jobs(), indent=2))
     return 0
@@ -186,6 +241,13 @@ def main(argv: list[str] | None = None) -> int:
     w = sub.add_parser("poll", help="Poll an async backend job; fetch asset when done")
     w.add_argument("job_id")
     w.set_defaults(fn=cmd_poll)
+    i = sub.add_parser("import-asset", help="Import a verified external asset as a ready job")
+    i.add_argument("--scene", default=None, help="existing scene id (default: create)")
+    i.add_argument("--name", default="Imported scene")
+    i.add_argument("--asset", required=True, help="path to real .ply splat asset")
+    i.add_argument("--poses", default=None, help="path to COLMAP sparse model or transforms.json")
+    i.add_argument("--poses-format", default=None)
+    i.set_defaults(fn=cmd_import_asset)
     j = sub.add_parser("jobs", help="List jobs + transitions")
     j.set_defaults(fn=cmd_jobs)
     args = ap.parse_args(argv)

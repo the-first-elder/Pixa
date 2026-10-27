@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 const STAGES = [
   { n: 0, title: 'Scaffold + API access', state: 'done' },
-  { n: 1, title: 'Real 3D pipeline', state: 'pending — needs fixture video + KIRI/RunPod' },
+  { n: 1, title: 'Real 3D pipeline', state: 'done — tester.mp4 → 73k-splat PLY in browser' },
   { n: 2, title: 'Capture + upload', state: 'done' },
   { n: 3, title: 'Scene index', state: 'pending' },
   { n: 4, title: 'Scene graph', state: 'pending' },

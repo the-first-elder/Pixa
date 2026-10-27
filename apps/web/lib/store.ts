@@ -151,6 +151,32 @@ export function latestJobForScene(sceneId: string): ProcessingJob | null {
   return jobs[0] ?? null;
 }
 
+export interface StoredAsset {
+  assetPath: string;
+  format: string;
+  posesPath?: string | null;
+  posesFormat?: string | null;
+}
+
+/** Latest READY reconstruction job carrying a verified asset. Null otherwise. */
+export function readyAssetForScene(
+  sceneId: string,
+): (StoredAsset & { jobId: string }) | null {
+  const jobs = Object.values(load<ProcessingJob>('jobs.json'))
+    .filter(
+      (j) =>
+        j.sceneId === sceneId &&
+        j.jobType === 'reconstruction' &&
+        j.status === 'ready' &&
+        typeof (j as ProcessingJob & { asset?: unknown }).asset === 'object' &&
+        (j as ProcessingJob & { asset?: StoredAsset }).asset !== null,
+    )
+    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+  const job = jobs[0] as (ProcessingJob & { asset: StoredAsset }) | undefined;
+  if (!job) return null;
+  return { ...job.asset, jobId: job.id };
+}
+
 // ---------------------------------------------------------------------------
 // Conversation sessions + scene actions (PRD §§ 22, 24 — what the AI
 // requested vs. what actually executed).

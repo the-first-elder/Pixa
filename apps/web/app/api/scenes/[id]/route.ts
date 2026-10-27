@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import { assertManifestVersion } from '@worldlens/scene-schema';
 import { getScene, latestJobForScene } from '@/lib/store';
+import { manifestForScene } from '@/lib/manifest';
 
 /**
  * GET /api/scenes/:sceneId — scene manifest + supported capabilities.
- * Until Stage 1 produces a real asset, capabilities are honestly all-false
- * and there is no manifest — never a fabricated scene.
+ * Manifest comes from the latest READY job with a verified asset; otherwise
+ * null with all-false capabilities — never a fabricated scene.
  */
 export async function GET(
   _req: Request,
@@ -13,10 +15,12 @@ export async function GET(
   const { id } = await params;
   const scene = getScene(id);
   if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const manifest = manifestForScene(scene.id);
+  if (manifest) assertManifestVersion(manifest);
   return NextResponse.json({
     scene,
-    manifest: null,
-    capabilities: {
+    manifest,
+    capabilities: manifest?.capabilities ?? {
       navigation: false,
       objectHighlight: false,
       routes: false,
