@@ -4,8 +4,11 @@
  * Server-only. Secrets never leave here.
  */
 import 'server-only';
-import { chat, type ToolCall } from '@worldlens/model-adapters';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { chat, type ChatContentPart, type ToolCall } from '@worldlens/model-adapters';
 import type { ActionResult } from '@worldlens/shared-types';
+import { STORAGE_DIR } from './config';
 import {
   appendHistory,
   getOrCreateSession,
@@ -45,8 +48,19 @@ export interface QueryOutcome {
 
 function sceneSummary(sceneId: string): string {
   const index = getSceneIndex(sceneId);
+  const scaleNote =
+    'Scale: UNCALIBRATED reconstruction units — never report meters, widths, or room dimensions as measured. ' +
+    'If asked for size/dimensions, explain scale is not established and give only qualitative relations.';
+  const coverageNote = (() => {
+    if (!index.coverage) return 'Coverage: unknown (no coverage report yet) — do not claim full coverage.';
+    const base = 'Coverage: ' + index.coverage.registeredFrames + '/' + index.coverage.totalFrames +
+      ' frames registered (' + index.coverage.percent + '%). ';
+    if (index.coverage.gapRanges.length === 0) return base + 'No unreconstructed gaps.';
+    const gaps = index.coverage.gapRanges.map(([a, b]) => (a === b ? String(a) : a + '-' + b)).join(', ');
+    return base + 'Unreconstructed gaps (treat as damaged/unknown, warn before navigating there): frames ' + gaps + '.';
+  })();
   if (index.status === 'pending') {
-    return 'Scene index: PENDING. No entities, relationships, or viewpoints are indexed yet. ' +
+    return `Scene index: PENDING. No entities, relationships, or viewpoints are indexed yet. ${scaleNote} ${coverageNote} ` +
       'Any location/object/route request will validate as not_found — say so explicitly.';
   }
   const lines = index.entities.map(
@@ -55,7 +69,7 @@ function sceneSummary(sceneId: string): string {
       ` frames=${e.evidence.frames.join(',') || 'none'}`,
   );
   const vps = index.viewpoints.map((v) => `- viewpoint ${v.label} id=${v.id}`).join('\n');
-  return `Scene index (${index.status}). Entities:\n${lines.join('\n') || '(none)'}\nViewpoints:\n${vps || '(none)'}`;
+  return `Scene index (${index.status}). Entities:\n${lines.join('\n') || '(none)'}\nViewpoints:\n${vps || '(none)'}\n${scaleNote}\n${coverageNote}`;
 }
 
 export async function runQuery(
@@ -115,18 +129,48 @@ export async function runQuery(
   }
 
   // Second pass: model explains the ACTUAL validation outcomes (never claims success on failure).
+  // Evidence frames are attached as images so attribute questions (color, state,
+  // contents) are answered from real pixels, not priors.
   let response = result.content?.trim() ?? '';
   if (dispatched.length > 0) {
     const report = dispatched
       .map((d) => `- ${d.action}: status=${d.status} target=${d.targetId ?? 'none'}${d.message ? ` — ${d.message}` : ''}`)
       .join('\n');
+    const frameNums = [
+      ...new Set(
+        dispatched.flatMap((d) => {
+          const ev = d.evidence as { frames?: number[] } | undefined;
+          return Array.isArray(ev?.frames) ? ev.frames : [];
+        }),
+      ),
+    ].slice(0, 3);
+    const imageParts: ChatContentPart[] = [];
+    for (const f of frameNums) {
+      try {
+        const p = join(STORAGE_DIR, 'assets', sceneId, 'frames', `${String(f).padStart(4, '0')}.jpg`);
+        imageParts.push({
+          type: 'image_url',
+          image_url: { url: `data:image/jpeg;base64,${readFileSync(p).toString('base64')}` },
+        });
+      } catch {
+        // Missing frame file: answer from text evidence only, never fail the query.
+      }
+    }
     const follow = await chat({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
-          content: `User request: ${message}\nTool execution results (ground truth, explain these exactly):\n${report}\n` +
-            `Write the user-facing reply (2-4 sentences, evidence-cited, honest about failures).`,
+          content: [
+            {
+              type: 'text',
+              text: `User request: ${message}\nTool execution results (ground truth, explain these exactly):\n${report}\n` +
+                `Attached evidence frames show the relevant objects (frame numbers match the evidence above). ` +
+                `Use them for visual attributes (color, state, contents); cite frame numbers. ` +
+                `Write the user-facing reply (2-4 sentences, evidence-cited, honest about failures).`,
+            },
+            ...imageParts,
+          ],
         },
       ],
       maxTokens: 2048,

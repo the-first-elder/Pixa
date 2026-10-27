@@ -19,7 +19,10 @@ export interface CameraCommand {
 export interface ViewerHandle {
   flyTo: (cmd: CameraCommand) => void;
   highlight: (positions: [number, number, number][]) => number;
+  setMode: (mode: 'orbit' | 'walk') => void;
 }
+
+export type ViewerMode = 'orbit' | 'walk';
 
 export type ViewerStatus =
   | 'loading-manifest'
@@ -55,10 +58,14 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
   const highlightRef = useRef<(positions: [number, number, number][]) => number>(() => 0);
   const [status, setStatus] = useState<ViewerStatus>('loading-manifest');
   const [detail, setDetail] = useState<string>('');
+  const [mode, setModeState] = useState<ViewerMode>('orbit');
+  const modeRef = useRef<ViewerMode>('orbit');
+  const setModeRef = useRef<(m: ViewerMode) => void>(() => {});
 
   useImperativeHandle(ref, () => ({
     flyTo: (cmd: CameraCommand) => flyRef.current(cmd),
     highlight: (positions: [number, number, number][]) => highlightRef.current(positions),
+    setMode: (m: ViewerMode) => setModeRef.current(m),
   }));
 
   useEffect(() => {
@@ -109,6 +116,40 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
 
+        // Walk mode: drag-look + WASD free-fly, clamped to a bounding sphere
+        // around the capture volume. No collision yet (splats are not
+        // colliders) — the UI labels it free-fly, not walking.
+        let boundCenter = new THREE.Vector3(0, 0, 0);
+        let boundRadius = 5;
+        {
+          const pts = (manifest.viewpoints ?? [])
+            .filter((v) => v.position && v.target)
+            .map((v) => new THREE.Vector3(...(v.position as [number, number, number])));
+          if (pts.length > 0) {
+            boundCenter = pts.reduce((s, p) => s.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+            boundRadius = Math.max(1.5, ...pts.map((p) => p.distanceTo(boundCenter))) * 2.2;
+          }
+        }
+        setModeRef.current = (m: ViewerMode) => {
+          modeRef.current = m;
+          setModeState(m);
+          controls.enabled = m === 'orbit';
+          renderer.domElement.style.cursor = m === 'walk' ? 'crosshair' : '';
+          needsRender = true;
+        };
+
+        const keys = new Set<string>();
+        const onKeyDown = (e: KeyboardEvent) => {
+          if (modeRef.current !== 'walk') return;
+          if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+            keys.add(e.code);
+            e.preventDefault();
+          }
+        };
+        const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code);
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+
         let needsRender = true;
         const spark = new SparkRenderer({
           renderer,
@@ -131,6 +172,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
           tween = null;
         });
         flyRef.current = (cmd: CameraCommand) => {
+          if (modeRef.current !== 'orbit') setModeRef.current('orbit');
           tween = {
             fromPos: camera.position.clone(),
             toPos: new THREE.Vector3(...cmd.position),
@@ -141,6 +183,36 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
           };
           needsRender = true;
         };
+
+        // Drag-look for walk mode (OrbitControls is disabled there).
+        let dragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        const onPointerDown = (e: PointerEvent) => {
+          if (modeRef.current !== 'walk') return;
+          dragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        };
+        const onPointerMove = (e: PointerEvent) => {
+          if (!dragging || modeRef.current !== 'walk') return;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          euler.setFromQuaternion(camera.quaternion);
+          euler.y -= dx * 0.0032;
+          euler.x = Math.max(-1.45, Math.min(1.45, euler.x - dy * 0.0032));
+          camera.quaternion.setFromEuler(euler);
+          needsRender = true;
+        };
+        const onPointerUp = () => {
+          dragging = false;
+        };
+        renderer.domElement.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
 
         const mesh = new SplatMesh({
           url: manifest.asset.location,
@@ -216,9 +288,35 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         };
 
         let raf = 0;
+        let lastT = performance.now();
+        const walkDir = new THREE.Vector3();
+        const walkRight = new THREE.Vector3();
+        const walkMove = new THREE.Vector3();
         const loop = () => {
           if (cancelled) return;
           raf = requestAnimationFrame(loop);
+          const now = performance.now();
+          const dt = Math.min(0.1, (now - lastT) / 1000);
+          lastT = now;
+          if (modeRef.current === 'walk' && (keys.size > 0)) {
+            camera.getWorldDirection(walkDir);
+            walkRight.crossVectors(walkDir, camera.up).normalize();
+            walkMove.set(0, 0, 0);
+            if (keys.has('KeyW') || keys.has('ArrowUp')) walkMove.add(walkDir);
+            if (keys.has('KeyS') || keys.has('ArrowDown')) walkMove.sub(walkDir);
+            if (keys.has('KeyD') || keys.has('ArrowRight')) walkMove.add(walkRight);
+            if (keys.has('KeyA') || keys.has('ArrowLeft')) walkMove.sub(walkRight);
+            if (walkMove.lengthSq() > 0) {
+              walkMove.normalize().multiplyScalar(boundRadius * 0.9 * dt);
+              camera.position.add(walkMove);
+              // Clamp to the capture volume: free-fly, not clip-through.
+              const off = camera.position.clone().sub(boundCenter);
+              if (off.length() > boundRadius) {
+                camera.position.copy(boundCenter).addScaledVector(off.normalize(), boundRadius);
+              }
+              needsRender = true;
+            }
+          }
           if (tween) {
             const t = Math.min(1, (performance.now() - tween.start) / tween.duration);
             const e = easeInOutCubic(t);
@@ -241,6 +339,11 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         cleanup = () => {
           cancelAnimationFrame(raf);
           window.removeEventListener('resize', resize);
+          window.removeEventListener('keydown', onKeyDown);
+          window.removeEventListener('keyup', onKeyUp);
+          renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
           controls.dispose();
           markerGeo.dispose();
           markerMat.dispose();
@@ -274,6 +377,28 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
               'No reconstructed scene yet. Upload a video and run reconstruction first.'}
             {status === 'error' && `Viewer error: ${detail}`}
           </p>
+        </div>
+      )}
+      {status === 'ready' && (
+        <div className="absolute bottom-3 left-3 flex items-center gap-1 rounded-md bg-black/60 px-1 py-1 text-xs">
+          <button
+            type="button"
+            onClick={() => setModeRef.current('orbit')}
+            className={`rounded px-2 py-1 ${mode === 'orbit' ? 'bg-white text-black' : 'text-neutral-300'}`}
+          >
+            Orbit
+          </button>
+          <button
+            type="button"
+            onClick={() => setModeRef.current('walk')}
+            className={`rounded px-2 py-1 ${mode === 'walk' ? 'bg-white text-black' : 'text-neutral-300'}`}
+            title="Free-fly: drag to look, WASD to move. No collision yet."
+          >
+            Walk
+          </button>
+          {mode === 'walk' && (
+            <span className="px-2 text-neutral-500">drag to look · WASD to move · free-fly, no collision</span>
+          )}
         </div>
       )}
     </div>

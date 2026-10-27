@@ -34,11 +34,21 @@ export interface IndexViewpoint {
   target: [number, number, number] | null;
 }
 
+export interface SceneCoverage {
+  registeredFrames: number;
+  totalFrames: number;
+  percent: number;
+  registeredRanges: [number, number][];
+  gapRanges: [number, number][];
+  derivedFrom: string;
+}
+
 export interface SceneIndex {
   status: 'pending' | 'partial' | 'ready';
   entities: IndexEntity[];
   relationships: IndexRelationship[];
   viewpoints: IndexViewpoint[];
+  coverage?: SceneCoverage | null;
 }
 
 export function getSceneIndex(sceneId: string): SceneIndex {
@@ -48,6 +58,7 @@ export function getSceneIndex(sceneId: string): SceneIndex {
       entities?: IndexEntity[];
       relationships?: IndexRelationship[];
       viewpoints?: IndexViewpoint[];
+      coverage?: SceneCoverage;
     };
     const entities = data.entities ?? [];
     const status = entities.length === 0 ? 'pending' : 'partial';
@@ -56,6 +67,7 @@ export function getSceneIndex(sceneId: string): SceneIndex {
       entities,
       relationships: data.relationships ?? [],
       viewpoints: data.viewpoints ?? [],
+      coverage: data.coverage ?? null,
     };
   } catch {
     return { status: 'pending', entities: [], relationships: [], viewpoints: [] };

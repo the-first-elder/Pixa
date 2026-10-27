@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import CoverageBadge from '@/components/CoverageBadge';
 import JobStatus from '@/components/JobStatus';
 import SceneWorkspace from '@/components/SceneWorkspace';
 import { getScene, latestJobForScene } from '@/lib/store';
@@ -19,7 +20,8 @@ export default async function ScenePage({ params }: { params: Promise<{ id: stri
         <h1 className="text-sm font-medium">{scene.name}</h1>
         <p className="text-xs text-neutral-500">
           {scene.sourceVideo ? 'Source video attached' : 'No video yet'} ·{' '}
-          {job ? `job ${job.status}` : 'no processing job'}
+          {job ? `job ${job.status}` : 'no processing job'}{' '}
+          <CoverageBadge sceneId={id} />
         </p>
       </header>
       <div className="flex flex-1 flex-col overflow-auto">

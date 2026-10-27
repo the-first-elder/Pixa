@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { assertManifestVersion } from '@worldlens/scene-schema';
 import { getScene, latestJobForScene } from '@/lib/store';
+import { getSceneIndex } from '@/lib/scene-index';
 import { manifestForScene } from '@/lib/manifest';
 
 /**
@@ -29,5 +30,6 @@ export async function GET(
     },
     viewpoints: [],
     latestJob: latestJobForScene(scene.id),
+    coverage: getSceneIndex(scene.id).coverage ?? null,
   });
 }

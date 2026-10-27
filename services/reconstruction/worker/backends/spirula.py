@@ -165,6 +165,7 @@ def finalize_job(job_id: str, workdir: str) -> dict[str, Any]:
     if os.path.getsize(asset_path) < 1024:
         raise SpirulaError(f"Asset suspiciously small: {asset_path}")
     sparse = os.path.join(workdir, "workspace", "sparse", "0")
+    images_dir = os.path.join(workdir, "workspace", "images")
     jobs = store._load("jobs.json")
     jobs[job_id]["asset"] = {
         "assetPath": asset_path,
@@ -172,10 +173,12 @@ def finalize_job(job_id: str, workdir: str) -> dict[str, Any]:
         "posesPath": sparse if os.path.isdir(sparse) else None,
         "posesFormat": "colmap-sparse",
     }
+    frames_b = len([f for f in os.listdir(images_dir) if f.endswith(".jpg")]) if os.path.isdir(images_dir) else None
     jobs[job_id]["diagnostics"] = {
         "cameraPosesEstimated": True,
         "framesRegistered": None,
         "framesRejected": None,
+        "framesB": frames_b,
         "coverageConcentratedInOneArea": None,
         "largeGapsOrUnstableRegions": None,
         "notes": [

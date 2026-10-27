@@ -1,6 +1,6 @@
 export { loadConfig, MetaApiError } from './config';
 export { chat, listModels } from './spark';
-export type { ChatMessage, ChatOptions, ChatResult, ToolCall, ToolDefinition } from './spark';
+export type { ChatContentPart, ChatMessage, ChatOptions, ChatResult, ToolCall, ToolDefinition } from './spark';
 export { segmentImage, parseBoxes } from './sam';
 export type { SamBox, SamImageResult, SegmentImageOptions } from './sam';
 export { transcribe } from './voice';
