@@ -21,6 +21,7 @@ import glob
 import os
 import shutil
 import signal
+import struct
 import subprocess
 import time
 from typing import Any
@@ -73,6 +74,20 @@ def _run(cmd: list[str], timeout: int, log_path: str) -> str:
             tail = log.read()[-800:]
         raise SpirulaError(f"{cmd[1]} {cmd[2]} failed (exit {p.returncode}): {tail}")
     return log_path
+
+
+def registered_count(images_bin: str) -> int:
+    """Images registered in a COLMAP sparse model. First uint64 of images.bin.
+    Returns -1 when the file cannot be parsed (unknown, never guessed)."""
+    try:
+        with open(images_bin, "rb") as f:
+            raw = f.read(8)
+        if len(raw) < 8:
+            return -1
+        (n,) = struct.unpack("<Q", raw)
+        return int(n) if 0 <= n < 1000000 else -1
+    except OSError:
+        return -1
 
 
 def _train_and_watch(binpath: str, workspace: str, iterations: int,
@@ -185,8 +200,15 @@ class SpirulaBackend:
             raise SpirulaError(f"Video not found: {video}")
         workdir = os.path.join(store.storage_dir(), "work", job["id"], "spirula")
         os.makedirs(workdir, exist_ok=True)
+        # Video frames need sequential matching (neighbours + loop closure),
+        # not the default individual-photo/exhaustive strategy. Override via
+        # ctx["sfmArgs"] when experimenting.
+        sfm_args = ctx.get("sfmArgs") or [
+            "--data-type", "video", "--pairs", "sequential", "--sequence", ".",
+        ]
         return {"workdir": workdir, "video": video,
-                "iterations": int(ctx.get("iterations", 30000))}
+                "iterations": int(ctx.get("iterations", 30000)),
+                "sfmArgs": list(sfm_args)}
 
     def status(self, handle: dict[str, Any]):
         marker_done = os.path.join(handle["workdir"], "DONE")
@@ -219,7 +241,8 @@ class SpirulaBackend:
                     "need overlapping views of a real scene (see docs/capture-protocol.md)."
                 )
             store.transition(job_id, "estimating_camera_poses", progress=30)
-            _run([binpath, "sfm", "auto", images, "-o", workspace], SFM_TIMEOUT,
+            _run([binpath, "sfm", "auto", images, "-o", workspace,
+                  *handle["sfmArgs"]], SFM_TIMEOUT,
                  os.path.join(workdir, "sfm.log"))
             sparse = os.path.join(workspace, "sparse", "0")
             if not (os.path.isdir(sparse) and os.listdir(sparse)):
@@ -228,6 +251,18 @@ class SpirulaBackend:
                     "The footage likely lacks overlapping views or stable features — "
                     "re-record per docs/capture-protocol.md. No poses invented."
                 )
+            # Coverage gate: refuse to train a fragment. The primary model must
+            # explain at least half the extracted frames, else this is a capture
+            # problem (dark/blank stretches, too-fast motion), not a training one.
+            reg = registered_count(os.path.join(sparse, "images.bin"))
+            floor = max(8, frames_b["count"] // 2)
+            if reg >= 0 and reg < floor:
+                raise SpirulaError(
+                    f"COVERAGE_GAP: SfM registered only {reg}/{frames_b['count']} frames "
+                    f"in the primary model (need {floor}). Likely causes: dark or blank "
+                    "stretches, too-fast motion, or weak overlap. See the contact sheet "
+                    "and docs/capture-protocol.md, then re-record the weak sections."
+                )
             store.transition(job_id, "reconstructing", progress=50)
             _train_and_watch(binpath, workspace, handle["iterations"],
                              workdir, TRAIN_TIMEOUT)
@@ -235,7 +270,7 @@ class SpirulaBackend:
         except (SpirulaError, media.MediaError, OSError) as e:
             msg = str(e)[:500]
             code = "SPIRULA_FAILED"
-            for prefix in ("SPIRULA_", "NO_"):
+            for prefix in ("SPIRULA_", "NO_", "COVERAGE_"):
                 if msg.startswith(prefix):
                     code = msg.split(":")[0]
                     break

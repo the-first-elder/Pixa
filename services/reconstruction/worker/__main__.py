@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 
 from . import media, store
@@ -40,7 +41,8 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 def execute_job(job_id: str, video: str, backend_name: str,
                 asset: str | None = None, poses: str | None = None,
-                allow_spend: bool = False, iterations: int = 30000) -> dict[str, Any]:
+                allow_spend: bool = False, iterations: int = 30000,
+                sfm_args: list[str] | None = None) -> dict[str, Any]:
     """Run the pipeline for an EXISTING job record. Shared by `process` and `run-job`."""
     backend_cls = BACKENDS.get(backend_name)
     if backend_cls is None:
@@ -50,7 +52,8 @@ def execute_job(job_id: str, video: str, backend_name: str,
     backend = backend_cls()
     job = store.get_job(job_id)
     ctx = {"video": video, "asset": asset, "poses": poses, "job": job,
-           "allowSpend": allow_spend, "iterations": iterations}
+           "allowSpend": allow_spend, "iterations": iterations,
+           "sfmArgs": sfm_args}
     try:
         handle = backend.submit(job, ctx)
     except RuntimeError as e:
@@ -124,7 +127,8 @@ def cmd_process(args: argparse.Namespace) -> int:
     print(json.dumps({"sceneId": scene["id"], "jobId": job["id"], "status": "queued"}))
 
     job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
-                      allow_spend=args.allow_spend, iterations=args.iterations)
+                      allow_spend=args.allow_spend, iterations=args.iterations,
+                      sfm_args=shlex.split(args.sfm_args) if args.sfm_args else None)
     if args.backend in ("kiri", "runpod") and job["status"] == "queued":
         print(json.dumps({"jobId": job["id"], "status": "submitted, poll for completion"}))
         return 0
@@ -140,7 +144,8 @@ def cmd_run_job(args: argparse.Namespace) -> int:
         print(f"UNKNOWN JOB: {args.job_id}", file=sys.stderr)
         return 2
     job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
-                      allow_spend=args.allow_spend, iterations=args.iterations)
+                      allow_spend=args.allow_spend, iterations=args.iterations,
+                      sfm_args=shlex.split(args.sfm_args) if args.sfm_args else None)
     print(json.dumps({"jobId": job["id"], "status": job["status"]}))
     return 0 if job["status"] == "ready" else 1
 
@@ -226,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Opt in to spending KIRI credits (kiri backend only)")
     r.add_argument("--iterations", type=int, default=30000,
                    help="Training iterations (spirula backend)")
+    r.add_argument("--sfm-args", default=None,
+                   help="Extra/override args for 'spirula sfm auto', quoted string")
     r.set_defaults(fn=cmd_process)
     u = sub.add_parser("run-job", help="Run pipeline for an existing job record")
     u.add_argument("job_id")
@@ -237,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Opt in to spending KIRI credits (kiri backend only)")
     u.add_argument("--iterations", type=int, default=30000,
                    help="Training iterations (spirula backend)")
+    u.add_argument("--sfm-args", default=None,
+                   help="Extra/override args for 'spirula sfm auto', quoted string")
     u.set_defaults(fn=cmd_run_job)
     w = sub.add_parser("poll", help="Poll an async backend job; fetch asset when done")
     w.add_argument("job_id")
