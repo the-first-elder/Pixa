@@ -145,6 +145,13 @@ export function getJob(id: string): ProcessingJob | null {
   return load<ProcessingJob>('jobs.json')[id] ?? null;
 }
 
+/** Jobs currently waiting for the single trainer slot. Bounds the queue. */
+export function waitingTrainerCount(): number {
+  return Object.values(load<ProcessingJob>('jobs.json')).filter(
+    (j) => j.waitingForTrainer === true && j.status !== 'ready' && j.status !== 'failed',
+  ).length;
+}
+
 /** Latest job for a scene (for status display). Null when none exists. */
 export function latestJobForScene(sceneId: string): ProcessingJob | null {
   const jobs = Object.values(load<ProcessingJob>('jobs.json'))

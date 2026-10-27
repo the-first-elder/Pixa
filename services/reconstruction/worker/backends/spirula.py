@@ -209,7 +209,6 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
         except KeyError:
             raise SpirulaError("Job record disappeared while queued for the trainer.")
         if waited == 0 or waited % 10 == 0:
-        if waited == 0 or waited % 10 == 0:
             jobs = store._load("jobs.json")
             if job_id in jobs:
                 jobs[job_id]["waitingForTrainer"] = True
@@ -253,6 +252,12 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
     except OSError:
         pass
     deadline = time.time() + timeout
+    # Stall detection: a healthy trainer writes progress to the log constantly.
+    # Silence longer than STALL_TIMEOUT means hung (not slow) — kill it so the
+    # queue never blocks behind a dead process. Tunable via WL_STALL_MINUTES.
+    stall_limit = float(os.environ.get("WL_STALL_MINUTES", "20")) * 60
+    last_size = -1
+    last_growth = time.time()
     try:
         while True:
             if time.time() > deadline:
@@ -271,6 +276,18 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
                 raise SpirulaError(
                     f"Train exited (code {proc.returncode}) before completing. "
                     f"See {log_path}.")
+            try:
+                size = os.path.getsize(log_path)
+            except OSError:
+                size = last_size
+            if size != last_size:
+                last_size = size
+                last_growth = time.time()
+            elif time.time() - last_growth > stall_limit:
+                raise SpirulaError(
+                    f"STALLED: trainer log silent for {int(stall_limit / 60)} min "
+                    f"(hung, not slow) — stopped so queued jobs can proceed. See {log_path}."
+                )
             time.sleep(10)
     finally:
         if proc.poll() is None:
@@ -466,7 +483,7 @@ class SpirulaBackend:
                 pass
             msg = str(e)[:500]
             code = "SPIRULA_FAILED"
-            for prefix in ("SPIRULA_", "NO_", "COVERAGE_", "TRAINING_"):
+            for prefix in ("SPIRULA_", "NO_", "COVERAGE_", "TRAINING_", "STALL_"):
                 if msg.startswith(prefix):
                     code = msg.split(":")[0]
                     break

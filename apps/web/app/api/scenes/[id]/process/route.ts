@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createJob, getScene } from '@/lib/store';
+import { createJob, getScene, waitingTrainerCount } from '@/lib/store';
 import { spawnWorker } from '@/lib/worker';
+
+/** Max queued-behind-trainer jobs. Beyond this, fail fast instead of piling up. */
+const MAX_QUEUE = 3;
 
 /**
  * POST /api/scenes/:sceneId/process — create a reconstruction job and launch
@@ -39,6 +42,12 @@ export async function POST(
     return NextResponse.json({ error: `Unknown backend: ${backend}` }, { status: 400 });
   }
 
+  if (backend === 'spirula' && waitingTrainerCount() >= MAX_QUEUE) {
+    return NextResponse.json(
+      { error: `Trainer queue is full (${MAX_QUEUE} waiting). Wait for a slot or cancel a queued job before submitting.` },
+      { status: 429 },
+    );
+  }
   const job = createJob(scene.id, 'reconstruction');
   const args = ['run-job', job.id, '--video', video, '--backend', backend];
   if (asset) args.push('--asset', asset);
