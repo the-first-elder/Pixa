@@ -58,6 +58,8 @@ Complaint: exterior imagery visible when moving up/outside.
 **Implemented**: Orbit renamed to Overview (explicit outside mode); Rooms is first-person with floor snap + wall slide + new ceiling clamp (raycast up, capped below ceiling; unknown overhead stays passable); bounds clamp in all modes; AI flights and tours use the same validated controls.
 **Verified**: rooms walk screenshot shows coherent interior at eye level, 0 console errors.
 
+## 7. Addendum: in-motion quality investigation (2026-10-28)
+
 Complaint: scene looks good stationary, degrades when moving.
 
 **Diagnosis (evidence-backed): the renderer is exonerated; the cause is viewpoint content, not motion.**
