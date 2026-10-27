@@ -113,7 +113,7 @@ export const TOOL_DEFS: ToolDefinition[] = [
 ];
 
 export type ValidationOutcome =
-  | { status: 'success'; targetId: string | null; message?: string; camera?: CameraCommand; entityIds?: string[]; positions?: [number, number, number][]; evidence?: unknown }
+  | { status: 'success'; targetId: string | null; message?: string; camera?: CameraCommand; stops?: CameraCommand[]; entityIds?: string[]; positions?: [number, number, number][]; evidence?: unknown }
   | { status: 'not_found' | 'invalid_args' | 'unsupported'; targetId: null; message: string };
 
 export interface CameraCommand {
@@ -200,12 +200,45 @@ export function validateToolCall(
       };
     }
     case 'showRoute': {
+      // Multi-stop cinematic move: resolve both ends to camera-framed stops
+      // (viewpoints first, else registered entity positions with an offset
+      // framing), then return the ordered stop list. No valid ends = no route.
+      const resolveStop = (q: string): { id: string; camera: CameraCommand } | null => {
+        const vp = index.viewpoints.find((v) => v.label.toLowerCase().includes(q.toLowerCase()));
+        if (vp?.position && vp?.target) {
+          return { id: vp.id, camera: { type: 'tween', position: vp.position, target: vp.target, durationMs: 2200 } };
+        }
+        const ent = findByLabel(index, q).find((e) => e.position !== null);
+        if (ent?.position) {
+          const p = ent.position;
+          return {
+            id: ent.id,
+            camera: {
+              type: 'tween',
+              position: [p[0] + 0.8, p[1] + 0.5, p[2] + 0.8],
+              target: p,
+              durationMs: 2200,
+            },
+          };
+        }
+        return null;
+      };
+      const from = resolveStop(str(args.from));
+      const to = resolveStop(str(args.to));
+      if (!from || !to) {
+        const missing = !from ? str(args.from) : str(args.to);
+        return {
+          status: 'not_found', targetId: null,
+          message: `"${missing}" is not a known destination in this scene. ` +
+            (index.status === 'pending'
+              ? 'Route planning needs the scene graph (Stage 4).'
+              : `Known destinations: ${index.viewpoints.map((v) => v.label).join(', ') || 'none'}.`),
+        };
+      }
       return {
-        status: 'not_found', targetId: null,
-        message: 'No validated route exists between those destinations in this scene. ' +
-          (index.status === 'pending'
-            ? 'Route planning needs the scene graph (Stage 4).'
-            : 'No connecting route entity links them.'),
+        status: 'success', targetId: to.id,
+        stops: [from.camera, to.camera],
+        message: `Route from ${str(args.from)} to ${str(args.to)}: 2 stops.`,
       };
     }
     case 'inspectLocation': {

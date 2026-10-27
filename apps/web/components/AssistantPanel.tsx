@@ -12,6 +12,7 @@ interface Action {
   targetId?: string;
   entityIds?: string[];
   positions?: [number, number, number][];
+  stops?: CameraCommand[];
   camera?: CameraCommand;
   evidence?: unknown;
 }
@@ -79,14 +80,16 @@ export default function AssistantPanel({
       setPhase('executing');
       for (const action of data.actions ?? []) {
         const camera = action.camera;
-        if (camera) {
-          onCamera(camera);
-          // Camera tween duration + margin, then verify by confirming dispatch.
-          // True per-frame verification arrives with renderer-confirmed states.
-          await new Promise((r) => setTimeout(r, camera.durationMs + 400));
+        const stops = action.stops ?? (camera ? [camera] : []);
+        if (stops.length > 0) {
+          // Cinematic move: fly stop-to-stop, then confirm the full sequence.
+          for (const stop of stops) {
+            onCamera(stop);
+            await new Promise((r) => setTimeout(r, stop.durationMs + 400));
+          }
           await confirm(action.actionId, action.status === 'success', {
             status: action.status,
-            executionResult: { dispatched: true, via: 'viewer-tween' },
+            executionResult: { dispatched: true, via: 'viewer-tween', stops: stops.length },
           });
         } else if (action.positions && action.positions.length > 0) {
           const shown = onHighlight(action.positions);

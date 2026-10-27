@@ -32,6 +32,7 @@ Behavior:
 export interface DispatchedAction extends ActionResult {
   actionId: string;
   camera?: { type: 'tween'; position: [number, number, number]; target: [number, number, number]; durationMs: number };
+  stops?: { type: 'tween'; position: [number, number, number]; target: [number, number, number]; durationMs: number }[];
   positions?: [number, number, number][];
   evidence?: unknown;
 }
@@ -106,6 +107,7 @@ export async function runQuery(
       message: 'message' in validation ? validation.message : undefined,
       actionId: action.id,
       camera: 'camera' in validation ? validation.camera : undefined,
+      stops: 'stops' in validation ? validation.stops : undefined,
       positions: 'positions' in validation ? validation.positions : undefined,
       entityIds: 'entityIds' in validation ? validation.entityIds : undefined,
       evidence: 'evidence' in validation ? validation.evidence : undefined,
