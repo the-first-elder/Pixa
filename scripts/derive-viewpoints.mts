@@ -86,15 +86,16 @@ const viewpoints: typeof overview[] = [];
 // unlike blind pose forwards, which can be SfM orientation outliers.
 const step = Math.max(1, Math.floor(centers.length / 5));
 const start = Math.min(centers.length - 1, step * 2);
-const registeredPts: { id: string; p: Vec3 }[] = [];
+let indexRaw: { entities?: { id: string; label: string; position: Vec3 | null }[] } = {};
 try {
-  const indexRaw = JSON.parse(readFileSync(join(storage, 'index', `${sceneId}.json`), 'utf8')) as {
-    entities?: { id: string; label: string; position: Vec3 | null }[];
-  };
-  for (const e of indexRaw.entities ?? []) {
-    if (e.position) registeredPts.push({ id: e.id, p: e.position });
-  }
-} catch { /* no index yet */ }
+  indexRaw = JSON.parse(readFileSync(join(storage, 'index', `${sceneId}.json`), 'utf8'));
+} catch {
+  indexRaw = {};
+}
+const registeredPts: { id: string; p: Vec3 }[] = [];
+for (const e of indexRaw.entities ?? []) {
+  if (e.position) registeredPts.push({ id: e.id, p: e.position });
+}
 for (let i = start; i < centers.length && viewpoints.length < 5; i += step) {
   let target: Vec3 = mean;
   let best = Infinity;
@@ -113,7 +114,12 @@ for (let i = start; i < centers.length && viewpoints.length < 5; i += step) {
   });
 }
 const indexPath = join(storage, 'index', `${sceneId}.json`);
-const index = JSON.parse(readFileSync(indexPath, 'utf8')) as { viewpoints?: unknown[] };
+let index: { entities?: unknown[]; relationships?: unknown[]; viewpoints?: unknown[]; coverage?: unknown };
+try {
+  index = JSON.parse(readFileSync(indexPath, 'utf8'));
+} catch {
+  index = { entities: [], relationships: [] };
+}
 viewpoints.push(overview);
 index.viewpoints = viewpoints;
 writeFileSync(indexPath, JSON.stringify(index, null, 2));

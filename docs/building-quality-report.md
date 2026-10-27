@@ -48,3 +48,16 @@ Load, 360° look, slow + fast rotation, rooms walk (W/A/S/D), tour transitions, 
 ## 6. Genuinely supported now
 
 Orbit / fly / eye-level rooms walk with wall slide + floor snap; NL navigation to 4 pose-derived viewpoints; object highlight markers at triangulated positions; evidence-viewpoint flights for unregistered detections; guided tours; voice input; coverage badges with gap-aware refusal; measurement in units + meter calibration flow.
+
+## 7. Addendum: in-motion quality investigation (2026-10-28)
+
+Complaint: scene looks good stationary, degrades when moving.
+
+**Diagnosis (evidence-backed): the renderer is exonerated; the cause is viewpoint content, not motion.**
+- No adaptive degradation exists in our code or Spark defaults (LOD off, fixed DPR, fixed density, sortRadial on).
+- Decisive test: screenshotted the SAME off-path viewpoint mid-drag and after a 10 s settle — visually identical smears. If motion caused it, the settled frame would be clean. It is not.
+- Sort-staleness is real in principle (async worker sort), but A/B showed decimation 973K→498K→243K and a 10× minAlpha bump do not change the artifact, while a small dense scene stays clean in motion. Severity tracks reconstruction thinness, not motion speed.
+- The settled-vs-motion gap the user sees is: initial views are entity-anchored (dense areas look good); any rotation leaves them for thinly-observed angles (single-pass portrait capture). Movement only *reveals* thin regions.
+
+**What was changed**: reverted all experimental tweaks (minAlpha, decimated assets); removed the AB test scene. No renderer change can recover views that were never captured.
+**What actually helps**: denser capture (the existing guidance); guided movement already prefers validated viewpoints; free orbit into thin zones renders honest smear/black, flagged by coverage.
