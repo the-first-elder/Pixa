@@ -18,12 +18,22 @@ export default function JobStatus({ jobId }: { jobId: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let reloaded = false;
     async function poll() {
       try {
         const res = await fetch(`/api/jobs/${jobId}`);
         if (!res.ok) throw new Error(`Job lookup failed (${res.status})`);
         const data = (await res.json()) as JobState;
         if (!cancelled) setJob(data);
+        if (data.status === 'ready' && !reloaded) {
+          // The viewer mounted before the asset existed — reload once so the
+          // manifest, viewer, and panels pick up the finished reconstruction.
+          reloaded = true;
+          setTimeout(() => {
+            if (!cancelled) window.location.reload();
+          }, 1200);
+          return;
+        }
         if (data.status !== 'ready' && data.status !== 'failed' && !cancelled) {
           setTimeout(poll, 2000);
         }
