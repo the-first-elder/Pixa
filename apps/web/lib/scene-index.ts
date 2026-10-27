@@ -15,6 +15,8 @@ export interface IndexEntity {
   label: string;
   status: string;
   position: [number, number, number] | null;
+  spatialRegistrationStatus?: 'unregistered' | 'approximate' | 'registered';
+  coordinateProvenance?: string | null;
   evidence: { frames: number[] };
 }
 

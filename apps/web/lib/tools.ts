@@ -113,7 +113,7 @@ export const TOOL_DEFS: ToolDefinition[] = [
 ];
 
 export type ValidationOutcome =
-  | { status: 'success'; targetId: string | null; message?: string; camera?: CameraCommand; entityIds?: string[]; evidence?: unknown }
+  | { status: 'success'; targetId: string | null; message?: string; camera?: CameraCommand; entityIds?: string[]; positions?: [number, number, number][]; evidence?: unknown }
   | { status: 'not_found' | 'invalid_args' | 'unsupported'; targetId: null; message: string };
 
 export interface CameraCommand {
@@ -184,8 +184,7 @@ export function validateToolCall(
         };
       }
       const registered = matches.filter((m) => m.position !== null);
-      if (registered.length === 0) {
-        return {
+      if (registered.length === 0) {        return {
           status: 'success', targetId: matches[0].id,
           entityIds: matches.map((m) => m.id),
           message: `${matches.length} match(es) found but none has a registered 3D position — ` +
@@ -193,7 +192,12 @@ export function validateToolCall(
           evidence: { frames: [...new Set(matches.flatMap((m) => m.evidence.frames))] },
         };
       }
-      return { status: 'success', targetId: registered[0].id, entityIds: registered.map((m) => m.id) };
+      return {
+        status: 'success',
+        targetId: registered[0].id,
+        entityIds: registered.map((m) => m.id),
+        positions: registered.map((m) => m.position as [number, number, number]),
+      };
     }
     case 'showRoute': {
       return {

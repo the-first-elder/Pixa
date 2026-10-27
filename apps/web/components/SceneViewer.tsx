@@ -18,6 +18,7 @@ export interface CameraCommand {
 
 export interface ViewerHandle {
   flyTo: (cmd: CameraCommand) => void;
+  highlight: (positions: [number, number, number][]) => number;
 }
 
 export type ViewerStatus =
@@ -51,11 +52,13 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
   const flyRef = useRef<(cmd: CameraCommand) => void>(() => {});
+  const highlightRef = useRef<(positions: [number, number, number][]) => number>(() => 0);
   const [status, setStatus] = useState<ViewerStatus>('loading-manifest');
   const [detail, setDetail] = useState<string>('');
 
   useImperativeHandle(ref, () => ({
     flyTo: (cmd: CameraCommand) => flyRef.current(cmd),
+    highlight: (positions: [number, number, number][]) => highlightRef.current(positions),
   }));
 
   useEffect(() => {
@@ -184,6 +187,34 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         mesh.frustumCulled = false;
         scene.add(mesh as unknown as THREE.Object3D);
 
+        // Highlight markers: small emissive spheres at triangulated object
+        // positions. These mark approximate locations, not object outlines —
+        // the confirm payload says so explicitly.
+        const markers = new THREE.Group();
+        scene.add(markers);
+        const markerGeo = new THREE.SphereGeometry(0.035, 16, 12);
+        const markerMat = new THREE.MeshBasicMaterial({ color: 0x4da3ff });
+        highlightRef.current = (positions) => {
+          markers.clear(); // shared geo/mat — no per-marker disposal needed
+          for (const p of positions) {
+            if (!p.every(Number.isFinite)) continue;
+            const m = new THREE.Mesh(markerGeo, markerMat);
+            m.position.set(p[0], p[1], p[2]);
+            markers.add(m);
+          }
+          if (markers.children.length > 0) {
+            const first = (markers.children[0] as THREE.Mesh).position;
+            flyRef.current({
+              type: 'tween',
+              position: [first.x + 0.8, first.y + 0.5, first.z + 0.8],
+              target: [first.x, first.y, first.z],
+              durationMs: 1600,
+            });
+          }
+          needsRender = true;
+          return markers.children.length;
+        };
+
         let raf = 0;
         const loop = () => {
           if (cancelled) return;
@@ -211,6 +242,8 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
           cancelAnimationFrame(raf);
           window.removeEventListener('resize', resize);
           controls.dispose();
+          markerGeo.dispose();
+          markerMat.dispose();
           mesh.dispose();
           renderer.dispose();
           renderer.domElement.remove();

@@ -11,6 +11,7 @@ interface Action {
   message?: string;
   targetId?: string;
   entityIds?: string[];
+  positions?: [number, number, number][];
   camera?: CameraCommand;
   evidence?: unknown;
 }
@@ -29,9 +30,11 @@ interface Message {
 export default function AssistantPanel({
   sceneId,
   onCamera,
+  onHighlight,
 }: {
   sceneId: string;
   onCamera: (cmd: CameraCommand) => void;
+  onHighlight: (positions: [number, number, number][]) => number;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -84,6 +87,15 @@ export default function AssistantPanel({
           await confirm(action.actionId, action.status === 'success', {
             status: action.status,
             executionResult: { dispatched: true, via: 'viewer-tween' },
+          });
+        } else if (action.positions && action.positions.length > 0) {
+          const shown = onHighlight(action.positions);
+          await confirm(action.actionId, shown > 0 && action.status === 'success', {
+            status: action.status,
+            executionResult: {
+              markers: shown,
+              note: 'proxy markers at triangulated positions (approximate), not object outlines',
+            },
           });
         } else {
           await confirm(action.actionId, action.status === 'success', {
