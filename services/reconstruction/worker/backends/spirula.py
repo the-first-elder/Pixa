@@ -20,7 +20,9 @@ from __future__ import annotations
 import glob
 import os
 import shutil
+import signal
 import subprocess
+import time
 from typing import Any
 
 from .. import media, store
@@ -46,17 +48,131 @@ def binary() -> str:
     return path
 
 
-def _run(cmd: list[str], timeout: int) -> str:
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-    except FileNotFoundError as e:
-        raise SpirulaError(f"Failed to launch {' '.join(cmd[:2])}: {e}") from e
-    except subprocess.TimeoutExpired as e:
-        raise SpirulaError(f"Timed out after {timeout}s: {' '.join(cmd[:3])}...") from e
+def _run(cmd: list[str], timeout: int, log_path: str) -> str:
+    """Run a long child process, STREAMING output to a log file.
+
+    Never use captured pipes here: a verbose trainer fills the pipe buffer
+    while the parent waits -> classic deadlock (observed live: train idled at
+    0% CPU with 16 KB stuck in the pipe after writing its final checkpoint).
+    """
+    with open(log_path, "w", encoding="utf-8") as log:
+        log.write(f"$ {' '.join(cmd)}\n")
+        log.flush()
+        try:
+            p = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT,
+                               timeout=timeout, check=False)
+        except FileNotFoundError as e:
+            raise SpirulaError(f"Failed to launch {' '.join(cmd[:2])}: {e}") from e
+        except subprocess.TimeoutExpired as e:
+            raise SpirulaError(f"Timed out after {timeout}s: {' '.join(cmd[:3])}...") from e
     if p.returncode != 0:
-        tail = (p.stderr or p.stdout or "")[-800:]
+        with open(log_path, encoding="utf-8", errors="replace") as log:
+            log.seek(0, os.SEEK_END)
+            size = log.tell()
+            log.seek(max(0, size - 4000))
+            tail = log.read()[-800:]
         raise SpirulaError(f"{cmd[1]} {cmd[2]} failed (exit {p.returncode}): {tail}")
-    return p.stdout or ""
+    return log_path
+
+
+def _train_and_watch(binpath: str, workspace: str, iterations: int,
+                     workdir: str, timeout: int) -> str:
+    """Train to completion, then STOP the process.
+
+    `spirula train` intentionally stays alive after training ("Viewer still
+    running -- press Ctrl-C to exit"). So: stream to train.log, watch for the
+    "Training complete" marker, then terminate the whole process group.
+    Returns the train.log path. Raises SpirulaError on timeout/failure text.
+    """
+    log_path = os.path.join(workdir, "train.log")
+    cmd = [binpath, "train", "--data", workspace, "--data-format", "colmap",
+           "--num-iterations", str(iterations),
+           "--output-dir-prefix", os.path.join(workdir, "outputs")]
+    with open(log_path, "w", encoding="utf-8") as log:
+        log.write(f"$ {' '.join(cmd)}\n")
+        log.flush()
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    deadline = time.time() + timeout
+    try:
+        while True:
+            if time.time() > deadline:
+                raise SpirulaError(
+                    f"Training timed out after {timeout}s without completing "
+                    f"{iterations} iterations. See {log_path}.")
+            with open(log_path, encoding="utf-8", errors="replace") as log:
+                tail = log.read()[-2000:]
+            if "Training complete" in tail:
+                return log_path
+            for marker in ("error:", "Error:", "Traceback", "VkResult"):
+                if marker in tail:
+                    raise SpirulaError(
+                        f"Training reported failure ({marker}). See {log_path}.")
+            if proc.poll() is not None and "Training complete" not in tail:
+                raise SpirulaError(
+                    f"Train exited (code {proc.returncode}) before completing. "
+                    f"See {log_path}.")
+            time.sleep(10)
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+
+def finalize_job(job_id: str, workdir: str) -> dict[str, Any]:
+    """Verify the training artifact and mark the job ready.
+
+    Shared by run() and by the operator for jobs whose trainer finished but
+    whose process outlived the run (e.g. killed viewer). The PLY header is
+    inspected — a non-splat or empty file never marks a job ready.
+    """
+    outputs = os.path.join(workdir, "outputs")
+    plys = sorted(
+        glob.glob(os.path.join(outputs, "**", "*.ply"), recursive=True),
+        key=os.path.getmtime,
+    )
+    if not plys:
+        raise SpirulaError("Training finished but produced no .ply asset.")
+    asset_path = plys[-1]
+    with open(asset_path, "rb") as f:
+        header = f.read(1500).decode("ascii", "replace")
+    if not header.startswith("ply\n") or "element vertex" not in header:
+        raise SpirulaError(f"Asset is not a valid PLY splat file: {asset_path}")
+    if os.path.getsize(asset_path) < 1024:
+        raise SpirulaError(f"Asset suspiciously small: {asset_path}")
+    sparse = os.path.join(workdir, "workspace", "sparse", "0")
+    jobs = store._load("jobs.json")
+    jobs[job_id]["asset"] = {
+        "assetPath": asset_path,
+        "format": "ply",
+        "posesPath": sparse if os.path.isdir(sparse) else None,
+        "posesFormat": "colmap-sparse",
+    }
+    jobs[job_id]["diagnostics"] = {
+        "cameraPosesEstimated": True,
+        "framesRegistered": None,
+        "framesRejected": None,
+        "coverageConcentratedInOneArea": None,
+        "largeGapsOrUnstableRegions": None,
+        "notes": [
+            "Poses from Spirula SfM (COLMAP-format sparse/0). "
+            "Per-frame registration counts not yet parsed (Stage 3).",
+        ],
+    }
+    store._save("jobs.json", jobs)
+    with open(os.path.join(workdir, "DONE"), "w", encoding="utf-8") as f:
+        f.write(asset_path)
+    store.transition(job_id, "compressing", progress=90)
+    return store.transition(job_id, "ready", progress=100)
 
 
 class SpirulaBackend:
@@ -84,8 +200,11 @@ class SpirulaBackend:
     def run(self, job_id: str, handle: dict[str, Any]) -> dict[str, Any]:
         workdir = handle["workdir"]
         binpath = binary()
-        images = os.path.join(workdir, "images")
+        # Layout follows the tool's own convention: sfm auto accepts a dataset
+        # dir containing images/ and writes features/matches/sparse beside it,
+        # so train --data-format colmap finds everything in one place.
         workspace = os.path.join(workdir, "workspace")
+        images = os.path.join(workspace, "images")
 
         def mark(name: str, text: str = "") -> None:
             with open(os.path.join(workdir, name), "w", encoding="utf-8") as f:
@@ -100,7 +219,8 @@ class SpirulaBackend:
                     "need overlapping views of a real scene (see docs/capture-protocol.md)."
                 )
             store.transition(job_id, "estimating_camera_poses", progress=30)
-            _run([binpath, "sfm", "auto", images, "-o", workspace], SFM_TIMEOUT)
+            _run([binpath, "sfm", "auto", images, "-o", workspace], SFM_TIMEOUT,
+                 os.path.join(workdir, "sfm.log"))
             sparse = os.path.join(workspace, "sparse", "0")
             if not (os.path.isdir(sparse) and os.listdir(sparse)):
                 raise SpirulaError(
@@ -109,42 +229,9 @@ class SpirulaBackend:
                     "re-record per docs/capture-protocol.md. No poses invented."
                 )
             store.transition(job_id, "reconstructing", progress=50)
-            _run([binpath, "train", "--data", workspace, "--data-format", "colmap",
-                  "--num-iterations", str(handle["iterations"]),
-                  "--output-dir-prefix", os.path.join(workdir, "outputs")],
-                 TRAIN_TIMEOUT)
-            plys = sorted(
-                glob.glob(os.path.join(workdir, "outputs", "**", "*.ply"), recursive=True),
-                key=os.path.getmtime,
-            )
-            if not plys:
-                raise SpirulaError(
-                    "Training finished but produced no .ply asset. Treating as failure, not success."
-                )
-            asset_path = plys[-1]
-            jobs = store._load("jobs.json")
-            jobs[job_id]["asset"] = {
-                "assetPath": asset_path,
-                "format": "ply",
-                "posesPath": sparse,
-                "posesFormat": "colmap-sparse",
-                "framesB": frames_b["count"],
-            }
-            jobs[job_id]["diagnostics"] = {
-                "cameraPosesEstimated": True,
-                "framesRegistered": None,
-                "framesRejected": None,
-                "coverageConcentratedInOneArea": None,
-                "largeGapsOrUnstableRegions": None,
-                "notes": [
-                    "Poses from Spirula SfM (COLMAP-format sparse/0). "
-                    "Per-frame registration counts not yet parsed (Stage 3).",
-                ],
-            }
-            store._save("jobs.json", jobs)
-            mark("DONE", asset_path)
-            store.transition(job_id, "compressing", progress=90)
-            return store.transition(job_id, "ready", progress=100)
+            _train_and_watch(binpath, workspace, handle["iterations"],
+                             workdir, TRAIN_TIMEOUT)
+            return finalize_job(job_id, workdir)
         except (SpirulaError, media.MediaError, OSError) as e:
             msg = str(e)[:500]
             code = "SPIRULA_FAILED"
