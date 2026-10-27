@@ -120,10 +120,26 @@ export default function AssistantPanel({
             {m.actions && m.actions.length > 0 && (
               <div className="mt-1 space-y-1">
                 {m.actions.map((a) => (
-                  <p key={a.actionId} className="text-xs text-neutral-500">
-                    {a.type}: {a.status}
-                    {a.message ? ` — ${a.message}` : ''}
-                  </p>
+                  <div key={a.actionId}>
+                    <p className="text-xs text-neutral-500">
+                      {a.type}: {a.status}
+                      {a.message ? ` — ${a.message}` : ''}
+                    </p>
+                    {Array.isArray((a.evidence as { frames?: unknown } | null | undefined)?.frames) && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {((a.evidence as { frames: number[] }).frames).slice(0, 6).map((f) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            key={f}
+                            src={`/api/scenes/${encodeURIComponent(sceneId)}/frames/${String(f).padStart(4, '0')}.jpg`}
+                            alt={`Evidence frame ${f}`}
+                            className="h-16 rounded border border-neutral-800"
+                            loading="lazy"
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

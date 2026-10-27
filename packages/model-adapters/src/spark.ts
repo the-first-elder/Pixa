@@ -6,9 +6,15 @@
  */
 import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config';
 
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | ChatContentPart[];
   tool_call_id?: string;
   name?: string;
 }
