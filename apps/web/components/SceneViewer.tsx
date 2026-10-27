@@ -33,6 +33,7 @@ export type ViewerStatus =
 
 interface Manifest {
   asset: { location: string; assetType: string; format: string; meshLocation?: string | null };
+  upCorrection?: { quaternion: [number, number, number, number] } | null;
   viewpoints: Array<{
     id: string;
     position: [number, number, number] | null;
@@ -100,6 +101,8 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
 
         const renderer = new THREE.WebGLRenderer({ antialias: false });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
         const resize = () => {
           const w = mount.clientWidth || 1;
           const h = mount.clientHeight || 1;
@@ -111,7 +114,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x000000);
-        const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 1000);
+        const camera = new THREE.PerspectiveCamera(72, 1, 0.01, 1000);
         camera.position.set(3, 2, 3);
         resize();
 
@@ -124,13 +127,21 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         // colliders) — the UI labels it free-fly, not walking.
         let boundCenter = new THREE.Vector3(0, 0, 0);
         let boundRadius = 5;
+        let eyeOffsetBase = 0.3;
         {
           const pts = (manifest.viewpoints ?? [])
             .filter((v) => v.position && v.target)
             .map((v) => new THREE.Vector3(...(v.position as [number, number, number])));
           if (pts.length > 0) {
-            boundCenter = pts.reduce((s, p) => s.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
-            boundRadius = Math.max(1.5, ...pts.map((p) => p.distanceTo(boundCenter))) * 2.2;
+            const mean = pts.reduce((s, p) => s.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+            boundRadius = Math.max(1.5, ...pts.map((p) => p.distanceTo(mean))) * 2.2;
+            // Bounds live in the levelled world frame (camera space).
+            boundCenter = mean.applyQuaternion(
+              manifest.upCorrection
+                ? new THREE.Quaternion(...manifest.upCorrection.quaternion)
+                : new THREE.Quaternion(),
+            );
+            eyeOffsetBase = Math.max(0.3, (boundRadius / 2.2) * 0.3);
           }
         }
         setModeRef.current = (m: ViewerMode) => {
@@ -166,10 +177,22 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
 
         let needsRender = true;
 
+        // Levelled world: splats, collision proxy, and markers live inside a
+        // rotated group (COLMAP frame); the camera stays in the levelled root
+        // frame. Backend positions are never rewritten — only the view is.
+        const worldGroup = new THREE.Group();
+        if (manifest.upCorrection) {
+          const q = manifest.upCorrection.quaternion;
+          worldGroup.quaternion.set(q[0], q[1], q[2], q[3]);
+        }
+        scene.add(worldGroup);
+        const toWorld = (p: readonly [number, number, number]): THREE.Vector3 =>
+          new THREE.Vector3(p[0], p[1], p[2]).applyQuaternion(worldGroup.quaternion);
+
         // Collision mesh (invisible proxy): raycast floor + walls for room walk.
         // Rendered with colorWrite off — never visible, always raycastable.
         const colliders: THREE.Object3D[] = [];
-        let eyeOffset = Math.max(0.3, boundRadius * 0.14);
+        let eyeOffset = eyeOffsetBase;
         const eyeOffsetRef = { current: eyeOffset };
         if (manifest.asset.meshLocation) {
           (async () => {
@@ -187,9 +210,8 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
                   colliders.push(mesh);
                 }
               });
-              scene.add(gltf.scene);
-              meshReadyRef.current(true);
-              needsRender = true;
+              worldGroup.add(gltf.scene);
+              meshReadyRef.current(true);              needsRender = true;
             } catch {
               // No collision mesh — rooms mode stays disabled, orbit/fly unaffected.
             }
@@ -202,7 +224,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
             needsRender = true;
           },
         });
-        scene.add(spark as unknown as THREE.Object3D);
+        worldGroup.add(spark as unknown as THREE.Object3D);
 
         interface Tween {
           fromPos: THREE.Vector3;
@@ -220,9 +242,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
           if (modeRef.current !== 'orbit') setModeRef.current('orbit');
           tween = {
             fromPos: camera.position.clone(),
-            toPos: new THREE.Vector3(...cmd.position),
+            toPos: toWorld(cmd.position),
             fromTarget: controls.target.clone(),
-            toTarget: new THREE.Vector3(...cmd.target),
+            toTarget: toWorld(cmd.target),
             start: performance.now(),
             duration: Math.max(1, cmd.durationMs),
           };
@@ -275,8 +297,8 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
               (v) => v.position && v.target,
             );
             if (vp?.position && vp?.target) {
-              camera.position.set(...vp.position);
-              controls.target.set(...vp.target);
+              camera.position.copy(toWorld(vp.position));
+              controls.target.copy(toWorld(vp.target));
             } else {
               try {
                 const geo = (mesh as unknown as { geometry?: THREE.BufferGeometry })
@@ -302,13 +324,13 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
           },
         });
         mesh.frustumCulled = false;
-        scene.add(mesh as unknown as THREE.Object3D);
+        worldGroup.add(mesh as unknown as THREE.Object3D);
 
         // Highlight markers: small emissive spheres at triangulated object
         // positions. These mark approximate locations, not object outlines —
         // the confirm payload says so explicitly.
         const markers = new THREE.Group();
-        scene.add(markers);
+        worldGroup.add(markers);
         const markerGeo = new THREE.SphereGeometry(0.035, 16, 12);
         const markerMat = new THREE.MeshBasicMaterial({ color: 0x4da3ff });
         highlightRef.current = (positions) => {
@@ -337,6 +359,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         const walkDir = new THREE.Vector3();
         const walkRight = new THREE.Vector3();
         const walkMove = new THREE.Vector3();
+        const walkVel = new THREE.Vector3();
         const flatDir = new THREE.Vector3();
         const raycaster = new THREE.Raycaster();
         const downDir = new THREE.Vector3(0, -1, 0);
@@ -405,8 +428,15 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
             if (keys.has('KeyD') || keys.has('ArrowRight')) walkMove.add(walkRight);
             if (keys.has('KeyA') || keys.has('ArrowLeft')) walkMove.sub(walkRight);
             if (walkMove.lengthSq() > 0) {
-              walkMove.normalize().multiplyScalar(boundRadius * 0.45 * dt);
-              if (tryStep(walkMove)) needsRender = true;
+              walkMove.normalize().multiplyScalar(boundRadius * 0.45);
+              walkVel.lerp(walkMove, Math.min(1, dt * 7));
+            } else {
+              // Smooth deceleration instead of an abrupt stop.
+              walkVel.multiplyScalar(Math.max(0, 1 - dt * 7));
+            }
+            if (walkVel.lengthSq() > 1e-8) {
+              const step = walkVel.clone().multiplyScalar(dt);
+              if (tryStep(step)) needsRender = true;
             }
             // Floor snap: stay at eye height above the mesh floor when found;
             // keep altitude over unmeshed holes instead of falling through.

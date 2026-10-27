@@ -20,11 +20,15 @@ export function manifestForScene(sceneId: string): SceneManifest | null {
     ? `/api/scenes/${encodeURIComponent(sceneId)}/mesh`
     : null;
   let viewpoints: SceneManifest['viewpoints'] = [];
+  let upCorrection: SceneManifest['upCorrection'] = null;
   try {
     const index = JSON.parse(
       readFileSync(join(STORAGE_DIR, 'index', `${sceneId}.json`), 'utf8'),
-    ) as { viewpoints?: SceneManifest['viewpoints'] };
+    ) as { viewpoints?: SceneManifest['viewpoints']; upCorrection?: SceneManifest['upCorrection'] };
     if (Array.isArray(index.viewpoints)) viewpoints = index.viewpoints;
+    if (index.upCorrection && Array.isArray(index.upCorrection.quaternion)) {
+      upCorrection = index.upCorrection;
+    }
   } catch {
     viewpoints = [];
   }
@@ -40,6 +44,7 @@ export function manifestForScene(sceneId: string): SceneManifest | null {
       sizeBytes: null,
     },
     coordinateSystem: asset.posesFormat ?? 'unknown',
+    upCorrection,
     viewpoints,
     capabilities: {
       navigation: true, // orbit + camera transitions on the real asset

@@ -40,6 +40,8 @@ export interface SceneManifest {
     sizeBytes: number | null;
   };
   coordinateSystem: string;
+  /** Rigid rotation (COLMAP frame -> gravity-levelled frame), if estimated. */
+  upCorrection: { quaternion: [number, number, number, number] } | null;
   viewpoints: Viewpoint[];
   capabilities: SceneCapabilities;
   sceneIndexStatus: 'pending' | 'partial' | 'ready' | 'failed';

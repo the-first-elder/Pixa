@@ -80,16 +80,36 @@ const overview = {
   target: mean,
 };
 const viewpoints: typeof overview[] = [];
-// A few capture-faithful viewpoints: evenly spaced real camera positions,
-// all looking at the scene center. (Per-frame recorded view directions can
-// tilt at floors/ceilings; the center-look is robust for an initial view.)
-const step = Math.max(1, Math.floor(centers.length / 4));
-for (let i = 0; i < centers.length && viewpoints.length < 5; i += step) {
+// A few capture-faithful viewpoints: real camera positions looking at the
+// nearest well-registered entity. Entity positions are multi-view validated
+// (markers land on them), so these views are guaranteed to show real content —
+// unlike blind pose forwards, which can be SfM orientation outliers.
+const step = Math.max(1, Math.floor(centers.length / 5));
+const start = Math.min(centers.length - 1, step * 2);
+const registeredPts: { id: string; p: Vec3 }[] = [];
+try {
+  const indexRaw = JSON.parse(readFileSync(join(storage, 'index', `${sceneId}.json`), 'utf8')) as {
+    entities?: { id: string; label: string; position: Vec3 | null }[];
+  };
+  for (const e of indexRaw.entities ?? []) {
+    if (e.position) registeredPts.push({ id: e.id, p: e.position });
+  }
+} catch { /* no index yet */ }
+for (let i = start; i < centers.length && viewpoints.length < 5; i += step) {
+  let target: Vec3 = mean;
+  let best = Infinity;
+  for (const { p } of registeredPts) {
+    const d = Math.hypot(p[0] - centers[i][0], p[1] - centers[i][1], p[2] - centers[i][2]);
+    if (d < best) {
+      best = d;
+      target = p;
+    }
+  }
   viewpoints.push({
     id: `vp_capture_${viewpoints.length + 1}`,
     label: `Captured view ${viewpoints.length + 1}`,
     position: centers[i],
-    target: mean,
+    target,
   });
 }
 const indexPath = join(storage, 'index', `${sceneId}.json`);
