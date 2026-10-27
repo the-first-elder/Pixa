@@ -13,10 +13,11 @@ import {
   appendHistory,
   getOrCreateSession,
   recordAction,
+  updateLastEntity,
   type ConversationSession,
 } from './store';
-import { getSceneIndex } from './scene-index';
-import { TOOL_DEFS, validateToolCall } from './tools';
+import { getSceneIndex, relatedEntities } from './scene-index';
+import { TOOL_DEFS, describeRelated, validateToolCall } from './tools';
 
 const SYSTEM_PROMPT = `You are the WorldLens scene assistant. You control a reconstructed 3D environment through tools — you never manipulate the renderer directly.
 
@@ -83,12 +84,32 @@ export async function runQuery(
     content: h.content,
   }));
 
+  // Pronoun follow-ups ("what is beside it?") resolve against the previously
+  // selected entity via the scene graph — scoped to this scene/session.
+  let effectiveMessage = message;
+  const lastId = session.lastEntityId;
+  if (lastId && /\b(it|that|there|this one|the same)\b/i.test(message) &&
+      !/\b(bed|chair|table|door|window|wardrobe|bag|clothes|handbag|shirt|entrance|room|area|region|view|route|tour)\b/i.test(message)) {
+    const index0 = getSceneIndex(sceneId);
+    const prev = index0.entities.find((e) => e.id === lastId);
+    if (prev) {
+      const rel = relatedEntities(index0, lastId);
+      const relText = rel.length > 0
+        ? rel.map((e) => `'${e.label}' (${e.type}, id=${e.id})`).join(', ')
+        : 'nothing recorded';
+      effectiveMessage =
+        `[Follow-up context: the user previously selected '${prev.label}' (id=${prev.id}). ` +
+        `Graph relations for it: ${describeRelated(sceneId, lastId)}. ` +
+        `Related entities: ${relText}.] User request: ${message}`;
+    }
+  }
+
   const result = await chat({
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: `Active scene ${sceneId}.\n${sceneSummary(sceneId)}` },
       ...history,
-      { role: 'user', content: message },
+      { role: 'user', content: effectiveMessage },
     ],
     tools: TOOL_DEFS,
     maxTokens: 2048,
@@ -126,6 +147,10 @@ export async function runQuery(
       entityIds: 'entityIds' in validation ? validation.entityIds : undefined,
       evidence: 'evidence' in validation ? validation.evidence : undefined,
     });
+    // Follow-up context ("it", "there") resolves to the last selected entity.
+    if (validation.status === 'success' && validation.targetId) {
+      updateLastEntity(session.id, validation.targetId);
+    }
   }
 
   // Second pass: model explains the ACTUAL validation outcomes (never claims success on failure).

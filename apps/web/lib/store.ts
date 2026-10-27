@@ -193,6 +193,7 @@ export interface ConversationSession {
   createdAt: string;
   lastActiveAt: string;
   history: HistoryItem[];
+  lastEntityId: string | null;
 }
 
 export interface SceneAction {
@@ -218,6 +219,7 @@ export function getOrCreateSession(sceneId: string, sessionId?: string): Convers
     createdAt: now(),
     lastActiveAt: now(),
     history: [],
+    lastEntityId: null,
   };
   sessions[session.id] = session;
   save('sessions.json', sessions);
@@ -229,6 +231,16 @@ export function appendHistory(sessionId: string, items: HistoryItem[]): void {
   const session = sessions[sessionId];
   if (!session) throw new Error(`Session not found: ${sessionId}`);
   session.history = [...session.history, ...items].slice(-40);
+  session.lastActiveAt = now();
+  sessions[sessionId] = session;
+  save('sessions.json', sessions);
+}
+
+export function updateLastEntity(sessionId: string, entityId: string | null): void {
+  const sessions = load<ConversationSession>('sessions.json');
+  const session = sessions[sessionId];
+  if (!session) return;
+  session.lastEntityId = entityId;
   session.lastActiveAt = now();
   sessions[sessionId] = session;
   save('sessions.json', sessions);
