@@ -5,7 +5,7 @@
  * empty state. Never a fabricated scene.
  */
 import 'server-only';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MANIFEST_VERSION, type SceneManifest } from '@worldlens/scene-schema';
 import { readyAssetForScene } from './store';
@@ -15,6 +15,10 @@ export function manifestForScene(sceneId: string): SceneManifest | null {
   const asset = readyAssetForScene(sceneId);
   // Only formats verified end-to-end (PLY, SPZ). Anything else -> no manifest.
   if (!asset || !['ply', 'spz'].includes(asset.format)) return null;
+  const meshPath = join(STORAGE_DIR, 'assets', sceneId, 'mesh.glb');
+  const meshLocation = existsSync(meshPath)
+    ? `/api/scenes/${encodeURIComponent(sceneId)}/mesh`
+    : null;
   let viewpoints: SceneManifest['viewpoints'] = [];
   try {
     const index = JSON.parse(
@@ -32,6 +36,7 @@ export function manifestForScene(sceneId: string): SceneManifest | null {
       assetType: 'splat',
       format: asset.format as SceneManifest['asset']['format'],
       location: `/api/scenes/${encodeURIComponent(sceneId)}/asset`,
+      meshLocation,
       sizeBytes: null,
     },
     coordinateSystem: asset.posesFormat ?? 'unknown',

@@ -22,7 +22,7 @@ export interface ViewerHandle {
   setMode: (mode: 'orbit' | 'walk') => void;
 }
 
-export type ViewerMode = 'orbit' | 'walk';
+export type ViewerMode = 'orbit' | 'walk' | 'rooms';
 
 export type ViewerStatus =
   | 'loading-manifest'
@@ -32,7 +32,7 @@ export type ViewerStatus =
   | 'error';
 
 interface Manifest {
-  asset: { location: string; assetType: string; format: string };
+  asset: { location: string; assetType: string; format: string; meshLocation?: string | null };
   viewpoints: Array<{
     id: string;
     position: [number, number, number] | null;
@@ -59,8 +59,10 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
   const [status, setStatus] = useState<ViewerStatus>('loading-manifest');
   const [detail, setDetail] = useState<string>('');
   const [mode, setModeState] = useState<ViewerMode>('orbit');
+  const [meshReady, setMeshReady] = useState(false);
   const modeRef = useRef<ViewerMode>('orbit');
   const setModeRef = useRef<(m: ViewerMode) => void>(() => {});
+  const meshReadyRef = useRef<(ready: boolean) => void>(() => {});
 
   useImperativeHandle(ref, () => ({
     flyTo: (cmd: CameraCommand) => flyRef.current(cmd),
@@ -131,19 +133,26 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
           }
         }
         setModeRef.current = (m: ViewerMode) => {
+          if (m === 'rooms' && colliders.length === 0) return; // no proxy, no rooms
           modeRef.current = m;
           setModeState(m);
           controls.enabled = m === 'orbit';
-          renderer.domElement.style.cursor = m === 'walk' ? 'crosshair' : '';
+          renderer.domElement.style.cursor = m === 'orbit' ? '' : 'crosshair';
           needsRender = true;
         };
+        meshReadyRef.current = (ready: boolean) => setMeshReady(ready);
 
         const keys = new Set<string>();
+        const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
         const onKeyDown = (e: KeyboardEvent) => {
-          if (modeRef.current !== 'walk') return;
-          if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+          if (modeRef.current !== 'walk' && modeRef.current !== 'rooms') return;
+          if (MOVE_KEYS.includes(e.code)) {
             keys.add(e.code);
             e.preventDefault();
+          }
+          if (modeRef.current === 'rooms' && (e.code === 'Equal' || e.code === 'Minus')) {
+            eyeOffsetRef.current = Math.max(0.05, eyeOffsetRef.current + (e.code === 'Equal' ? 0.05 : -0.05));
+            needsRender = true;
           }
         };
         const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code);
@@ -151,6 +160,37 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         window.addEventListener('keyup', onKeyUp);
 
         let needsRender = true;
+
+        // Collision mesh (invisible proxy): raycast floor + walls for room walk.
+        // Rendered with colorWrite off — never visible, always raycastable.
+        const colliders: THREE.Object3D[] = [];
+        let eyeOffset = Math.max(0.3, boundRadius * 0.14);
+        const eyeOffsetRef = { current: eyeOffset };
+        if (manifest.asset.meshLocation) {
+          (async () => {
+            try {
+              const { GLTFLoader } = await import(
+                'three/examples/jsm/loaders/GLTFLoader.js'
+              );
+              const gltf = await new GLTFLoader().loadAsync(manifest.asset.meshLocation as string);
+              gltf.scene.traverse((o) => {
+                const mesh = o as THREE.Mesh;
+                if (mesh.isMesh) {
+                  (mesh.material as THREE.Material).colorWrite = false;
+                  (mesh.material as THREE.Material).depthWrite = false;
+                  mesh.frustumCulled = false;
+                  colliders.push(mesh);
+                }
+              });
+              scene.add(gltf.scene);
+              meshReadyRef.current(true);
+              needsRender = true;
+            } catch {
+              // No collision mesh — rooms mode stays disabled, orbit/fly unaffected.
+            }
+          })();
+        }
+
         const spark = new SparkRenderer({
           renderer,
           onDirty: () => {
@@ -190,13 +230,13 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         let lastY = 0;
         const euler = new THREE.Euler(0, 0, 0, 'YXZ');
         const onPointerDown = (e: PointerEvent) => {
-          if (modeRef.current !== 'walk') return;
+          if (modeRef.current !== 'walk' && modeRef.current !== 'rooms') return;
           dragging = true;
           lastX = e.clientX;
           lastY = e.clientY;
         };
         const onPointerMove = (e: PointerEvent) => {
-          if (!dragging || modeRef.current !== 'walk') return;
+          if (!dragging || (modeRef.current !== 'walk' && modeRef.current !== 'rooms')) return;
           const dx = e.clientX - lastX;
           const dy = e.clientY - lastY;
           lastX = e.clientX;
@@ -292,13 +332,75 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         const walkDir = new THREE.Vector3();
         const walkRight = new THREE.Vector3();
         const walkMove = new THREE.Vector3();
+        const flatDir = new THREE.Vector3();
+        const raycaster = new THREE.Raycaster();
+        const downDir = new THREE.Vector3(0, -1, 0);
+        const tryStep = (step: THREE.Vector3): boolean => {
+          // Slide along walls: full step, else x-only, else z-only, else stop.
+          raycaster.set(camera.position, step.clone().normalize());
+          raycaster.far = 0.3;
+          if (raycaster.intersectObjects(colliders, false).length === 0) {
+            camera.position.add(step);
+            return true;
+          }
+          const xOnly = new THREE.Vector3(step.x, 0, 0);
+          if (xOnly.lengthSq() > 0) {
+            raycaster.set(camera.position, xOnly.clone().normalize());
+            if (raycaster.intersectObjects(colliders, false).length === 0) {
+              camera.position.add(xOnly);
+              return true;
+            }
+          }
+          const zOnly = new THREE.Vector3(0, 0, step.z);
+          if (zOnly.lengthSq() > 0) {
+            raycaster.set(camera.position, zOnly.clone().normalize());
+            if (raycaster.intersectObjects(colliders, false).length === 0) {
+              camera.position.add(zOnly);
+              return true;
+            }
+          }
+          return false;
+        };
         const loop = () => {
           if (cancelled) return;
           raf = requestAnimationFrame(loop);
           const now = performance.now();
           const dt = Math.min(0.1, (now - lastT) / 1000);
           lastT = now;
-          if (modeRef.current === 'walk' && (keys.size > 0)) {
+          if (modeRef.current === 'rooms' && keys.size > 0 && colliders.length > 0) {
+            // Eye-level walk: horizontal camera-relative motion, wall slide,
+            // floor snap. Speed scales with the scene; +/- adjusts eye height.
+            camera.getWorldDirection(walkDir);
+            flatDir.set(walkDir.x, 0, walkDir.z);
+            if (flatDir.lengthSq() < 1e-6) flatDir.set(0, 0, -1);
+            flatDir.normalize();
+            walkRight.crossVectors(flatDir, camera.up).normalize();
+            walkMove.set(0, 0, 0);
+            if (keys.has('KeyW') || keys.has('ArrowUp')) walkMove.add(flatDir);
+            if (keys.has('KeyS') || keys.has('ArrowDown')) walkMove.sub(flatDir);
+            if (keys.has('KeyD') || keys.has('ArrowRight')) walkMove.add(walkRight);
+            if (keys.has('KeyA') || keys.has('ArrowLeft')) walkMove.sub(walkRight);
+            if (walkMove.lengthSq() > 0) {
+              walkMove.normalize().multiplyScalar(boundRadius * 0.45 * dt);
+              if (tryStep(walkMove)) needsRender = true;
+            }
+            // Floor snap: stay at eye height above the mesh floor when found;
+            // keep altitude over unmeshed holes instead of falling through.
+            raycaster.set(camera.position, downDir);
+            raycaster.far = eyeOffsetRef.current + 1.5;
+            const hits = raycaster.intersectObjects(colliders, false);
+            if (hits.length > 0) {
+              const targetY = hits[0].point.y + eyeOffsetRef.current;
+              camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 6);
+              needsRender = true;
+            }
+            // Stay inside the capture volume.
+            const off = camera.position.clone().sub(boundCenter);
+            if (off.length() > boundRadius) {
+              camera.position.copy(boundCenter).addScaledVector(off.normalize(), boundRadius);
+              needsRender = true;
+            }
+          } else if (modeRef.current === 'walk' && (keys.size > 0)) {
             camera.getWorldDirection(walkDir);
             walkRight.crossVectors(walkDir, camera.up).normalize();
             walkMove.set(0, 0, 0);
@@ -392,12 +494,24 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
             type="button"
             onClick={() => setModeRef.current('walk')}
             className={`rounded px-2 py-1 ${mode === 'walk' ? 'bg-white text-black' : 'text-neutral-300'}`}
-            title="Free-fly: drag to look, WASD to move. No collision yet."
+            title="Free-fly: drag to look, WASD to move"
           >
-            Walk
+            Fly
+          </button>
+          <button
+            type="button"
+            onClick={() => meshReady && setModeRef.current('rooms')}
+            disabled={!meshReady}
+            className={`rounded px-2 py-1 ${mode === 'rooms' ? 'bg-white text-black' : 'text-neutral-300'} disabled:opacity-40`}
+            title={meshReady ? 'Eye-level walk with walls and floor' : 'Collision mesh still building'}
+          >
+            Rooms
           </button>
           {mode === 'walk' && (
             <span className="px-2 text-neutral-500">drag to look · WASD to move · free-fly, no collision</span>
+          )}
+          {mode === 'rooms' && (
+            <span className="px-2 text-neutral-500">drag to look · WASD to walk · +/− eye height · experimental proxy collision</span>
           )}
         </div>
       )}

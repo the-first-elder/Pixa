@@ -35,6 +35,8 @@ export interface SceneManifest {
     format: AssetFormat;
     /** Storage key or signed URL. Resolved server-side for private scenes. */
     location: string;
+    /** Optional collision mesh for room-scale walking. Same access rules. */
+    meshLocation?: string | null;
     sizeBytes: number | null;
   };
   coordinateSystem: string;
