@@ -147,6 +147,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         const keys = new Set<string>();
         const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
         const onKeyDown = (e: KeyboardEvent) => {
+          // Never hijack typing: chat input, buttons, and text fields keep keys.
+          const t = e.target as HTMLElement | null;
+          if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
           if (modeRef.current !== 'walk' && modeRef.current !== 'rooms') return;
           if (MOVE_KEYS.includes(e.code)) {
             keys.add(e.code);
@@ -356,8 +359,10 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         };
         const tryStep = (step: THREE.Vector3): boolean => {
           // Slide along walls: full step, else x-only, else z-only, else stop.
+          // Stop distance scales with eye height (~half eye height ahead).
+          const stopDist = Math.max(0.05, eyeOffsetRef.current * 0.5);
           raycaster.set(camera.position, step.clone().normalize());
-          raycaster.far = 0.3;
+          raycaster.far = stopDist;
           if (raycaster.intersectObjects(colliders, false).length === 0) {
             camera.position.add(step);
             return true;
@@ -428,7 +433,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
             if (keys.has('KeyD') || keys.has('ArrowRight')) walkMove.add(walkRight);
             if (keys.has('KeyA') || keys.has('ArrowLeft')) walkMove.sub(walkRight);
             if (walkMove.lengthSq() > 0) {
-              walkMove.normalize().multiplyScalar(boundRadius * 0.9 * dt);
+              walkMove.normalize().multiplyScalar(boundRadius * 0.3 * dt);
               camera.position.add(walkMove);
               // Clamp to the capture volume: free-fly, not clip-through.
               const off = camera.position.clone().sub(boundCenter);
