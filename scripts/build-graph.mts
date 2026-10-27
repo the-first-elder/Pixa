@@ -50,13 +50,30 @@ const radius = Math.max(...registered.map((e) => {
 
 // near: geometric proximity (provenance: approximate geometry -> inferred).
 const near: Relationship[] = [];
-const NEAR_T = radius * 0.6;
-for (let i = 0; i < registered.length; i++) for (let j = i + 1; j < registered.length; j++) {
-  const a = registered[i].position as Vec3; const b = registered[j].position as Vec3;
-  const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-  if (d <= NEAR_T) {
-    near.push({ source: registered[i].id, target: registered[j].id, type: 'near', status: 'inferred' });
-    console.log(`  near: ${registered[i].label} <-> ${registered[j].label} (${d.toFixed(2)})`);
+// "Beside" = each entity's 2 nearest registered neighbors within half the
+// scene span. Bounded (~2N edges) and local, unlike a radius threshold which
+// turns the whole room into one clique.
+{
+  const seen = new Set<string>();
+  for (const a of registered) {
+    const ap = a.position as Vec3;
+    const others = registered
+      .filter((b) => b.id !== a.id)
+      .map((b) => {
+        const bp = b.position as Vec3;
+        return { b, d: Math.hypot(ap[0] - bp[0], ap[1] - bp[1], ap[2] - bp[2]) };
+      })
+      .filter(({ d }) => d <= radius * 0.5)
+      .sort((x, y) => x.d - y.d)
+      .slice(0, 2);
+    for (const { b, d } of others) {
+      const k1 = `${a.id}|${b.id}`;
+      const k2 = `${b.id}|${a.id}`;
+      if (seen.has(k1) || seen.has(k2)) continue;
+      seen.add(k1);
+      near.push({ source: a.id, target: b.id, type: 'near', status: 'inferred' });
+      console.log(`  near: ${a.label} <-> ${b.label} (${d.toFixed(2)})`);
+    }
   }
 }
 
@@ -88,7 +105,12 @@ const r = await chat({
 });
 let proposal: { regions: { label: string; memberIds: string[] }[]; connections: { from: string; to: string; via: string }[] } = { regions: [], connections: [] };
 try {
-  proposal = JSON.parse(r.content ?? '{}');
+  const parsed = JSON.parse(r.content ?? '{}') as Partial<typeof proposal>;
+  if (Array.isArray(parsed.regions) && Array.isArray(parsed.connections)) {
+    proposal = { regions: parsed.regions, connections: parsed.connections };
+  } else {
+    console.log('region proposal has unexpected shape; keeping geometric relations only');
+  }
 } catch {
   console.log('region proposal unparseable; keeping geometric relations only');
 }
@@ -117,11 +139,26 @@ if (!confirmed) {
   console.log('Dry run. Re-run with --yes to write.');
   process.exit(0);
 }
-// Dedupe against existing relationships.
+// Rebuilds are idempotent: drop previously inferred regions + their edges
+// first (fresh proposal each run), but NEVER drop geometric edges or objects.
+// If the proposal failed this run, keep the previous regions.
+if (newEntities.length > 0) {
+  const newLabels = new Set(newEntities.map((e) => e.label));
+  const dropIds = new Set(
+    index.entities.filter((e) => e.type === 'region' && newLabels.has(e.label)).map((e) => e.id),
+  );
+  index.entities = index.entities.filter((e) => !dropIds.has(e.id));
+  index.relationships = index.relationships.filter(
+    (r) => !dropIds.has(r.source) && !dropIds.has(r.target),
+  );
+  for (const e of newEntities) index.entities.push(e);
+} else {
+  console.log('keeping previous regions (no fresh proposal)');
+}
+// Dedupe remaining (geometric) relationships.
 const key = (x: Relationship) => `${x.source}|${x.target}|${x.type}`;
 const existing = new Set(index.relationships.map(key));
 for (const rel of rels) if (!existing.has(key(rel))) index.relationships.push(rel);
-const existingIds = new Set(index.entities.map((e) => e.id));
-for (const e of newEntities) if (!existingIds.has(e.id)) index.entities.push(e);
+for (const e of newEntities) index.entities.push(e);
 writeFileSync(indexPath, JSON.stringify(index, null, 2));
 console.log(`wrote ${index.relationships.length} relationships, ${index.entities.length} entities`);

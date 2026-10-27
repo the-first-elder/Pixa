@@ -7,6 +7,7 @@
 import type { ToolDefinition } from '@worldlens/model-adapters';
 import {
   findByLabel,
+  evidenceViewpoint,
   getSceneIndex,
   relatedEntities,
   type SceneIndex,
@@ -221,12 +222,27 @@ export function validateToolCall(
         };
       }
       const registered = matches.filter((m) => m.position !== null);
-      if (registered.length === 0) {        return {
+      if (registered.length === 0) {
+        // No 3D position — but fly to where it was SEEN (evidence frame pose).
+        // This turns unregistered detections into navigable answers.
+        const frames = [...new Set(matches.flatMap((m) => m.evidence.frames))];
+        const view = evidenceViewpoint(sceneId, frames);
+        if (view) {
+          return {
+            status: 'success', targetId: matches[0].id,
+            entityIds: matches.map((m) => m.id),
+            camera: { type: 'tween', position: view.position, target: view.target, durationMs: 1600 },
+            evidence: { frames: frames.slice(0, 6) },
+            message: `${matches.length} match(es) found but no registered 3D position — ` +
+              'flying to the viewpoint where it was seen (frame evidence attached); its exact spot is not fixed.',
+          };
+        }
+        return {
           status: 'success', targetId: matches[0].id,
           entityIds: matches.map((m) => m.id),
           message: `${matches.length} match(es) found but none has a registered 3D position — ` +
             'showing evidence thumbnails only (no invented locations).',
-          evidence: { frames: [...new Set(matches.flatMap((m) => m.evidence.frames))] },
+          evidence: { frames },
         };
       }
       return {

@@ -51,6 +51,8 @@ export interface SceneIndex {
   coverage?: SceneCoverage | null;
 }
 
+type Vec3 = [number, number, number];
+
 export function getSceneIndex(sceneId: string): SceneIndex {
   const path = join(STORAGE_DIR, 'index', `${sceneId}.json`);
   try {
@@ -74,7 +76,95 @@ export function getSceneIndex(sceneId: string): SceneIndex {
   }
 }
 
-/** Find entities by case-insensitive label substring. Empty index → []. */
+/** First evidence frame with a registered camera pose → viewpoint camera.
+ * A-frame N is the same source frame as reconstruction frame 2N-1 (fps grids
+ * coincide). Returns null when no evidence frame was posed. */
+export function evidenceViewpoint(
+  sceneId: string,
+  frameIds: number[],
+): { position: [number, number, number]; target: [number, number, number] } | null {
+  const key = `${sceneId}`;
+  let entry = poseCache.get(key);
+  if (!entry) {
+    entry = loadPoses(sceneId);
+    poseCache.set(key, entry);
+  }
+  if (!entry) return null;
+  const { poses, intrinsics, radius } = entry;
+  for (const f of [...frameIds].sort((a, b) => a - b)) {
+    const pose = poses.get(`${String(2 * f - 1).padStart(4, '0')}.jpg`);
+    if (pose) {
+      const d = Math.max(0.5, radius * 1.2);
+      return {
+        position: pose.center,
+        target: [
+          pose.center[0] + pose.forward[0] * d,
+          pose.center[1] + pose.forward[1] * d,
+          pose.center[2] + pose.forward[2] * d,
+        ],
+      };
+    }
+  }
+  return null;
+}
+
+const poseCache = new Map<
+  string,
+  { poses: Map<string, { center: Vec3; forward: Vec3 }>; intrinsics: unknown; radius: number } | null
+>();
+
+function loadPoses(
+  sceneId: string,
+): { poses: Map<string, { center: Vec3; forward: Vec3 }>; intrinsics: unknown; radius: number } | null {
+  try {
+    const jobs = JSON.parse(readFileSync(join(STORAGE_DIR, 'jobs.json'), 'utf8')) as Record<
+      string,
+      { sceneId: string; status: string; asset?: { posesPath?: string } | null }
+    >;
+    const job = Object.values(jobs).find(
+      (j) => j.sceneId === sceneId && j.status === 'ready' && j.asset?.posesPath,
+    );
+    const sparse = job?.asset?.posesPath;
+    if (!sparse) return null;
+    const data = readFileSync(join(sparse, 'images.bin'));
+    let off = 8;
+    const n = Number(data.readBigUInt64LE(0));
+    const poses = new Map<string, { center: Vec3; forward: Vec3 }>();
+    const centers: Vec3[] = [];
+    for (let k = 0; k < n; k++) {
+      off += 4;
+      const qw = data.readDoubleLE(off); const qx = data.readDoubleLE(off + 8);
+      const qy = data.readDoubleLE(off + 16); const qz = data.readDoubleLE(off + 24);
+      off += 32;
+      const tx = data.readDoubleLE(off); const ty = data.readDoubleLE(off + 8); const tz = data.readDoubleLE(off + 16);
+      off += 24 + 4;
+      let name = '';
+      while (data[off] !== 0) { name += String.fromCharCode(data[off]); off++; }
+      off += 1;
+      const npts = Number(data.readBigUInt64LE(off)); off += 8 + npts * 24;
+      const [w, x, y, z] = [qw, qx, qy, qz];
+      const R = [
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+      ];
+      const C: Vec3 = [
+        -(R[0][0] * tx + R[1][0] * ty + R[2][0] * tz),
+        -(R[0][1] * tx + R[1][1] * ty + R[2][1] * tz),
+        -(R[0][2] * tx + R[1][2] * ty + R[2][2] * tz),
+      ];
+      const fwd: Vec3 = [R[0][2], R[1][2], R[2][2]];
+      const base = name.split('/').slice(-1)[0];
+      poses.set(base, { center: C, forward: fwd });
+      centers.push(C);
+    }
+    const mean: Vec3 = [0, 1, 2].map((i) => centers.reduce((s, c) => s + c[i], 0) / centers.length) as Vec3;
+    const radius = Math.max(...centers.map((c) => Math.hypot(c[0] - mean[0], c[1] - mean[1], c[2] - mean[2])), 1e-6);
+    return { poses, intrinsics: null, radius };
+  } catch {
+    return null;
+  }
+}
 export function findByLabel(index: SceneIndex, label: string): IndexEntity[] {
   const q = label.trim().toLowerCase();
   if (!q) return [];

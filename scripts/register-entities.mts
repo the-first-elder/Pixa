@@ -226,6 +226,9 @@ for (const ent of index.entities) {
     console.log(`  ${ent.label}: unregistered (maxAngle=${maxAngle.toFixed(1)}°)`);
     continue;
   }
+  // Keep evidence frames accurate and duplicate-free.
+  const detFrames = [...new Set(detections.filter((x) => x.label === ent.label).map((x) => x.frameIdx))].sort((a, b) => a - b);
+  ent.evidence = { frames: detFrames };
   const tri = triangulate(consensus);
   // Gate 2: residual relative to scene scale.
   if (!tri || tri.residual / radius > 0.15) {

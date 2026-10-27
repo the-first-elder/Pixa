@@ -13,10 +13,12 @@ function arg(name: string, def?: string): string | undefined {
 }
 const sceneId = arg('scene');
 const framesDir = arg('frames');
-const maxFrames = Math.max(1, parseInt(arg('max-frames', '12')!, 10));
+const maxFrames = Math.max(1, parseInt(arg('max-frames', '16')!, 10)); // detection frames
+const maxLabels = Math.max(1, parseInt(arg('max-labels', '16')!, 10)); // distinct categories
+const probeCount = Math.max(1, parseInt(arg('probe-frames', '8')!, 10)); // label-discovery frames
 const confirmed = process.argv.includes('--yes');
 if (!sceneId || !framesDir) {
-  console.error('Usage: index-scene.mts --scene <id> --frames <dir> [--max-frames 12] [--yes]');
+  console.error('Usage: index-scene.mts --scene <id> --frames <dir> [--max-frames 16] [--max-labels 16] [--probe-frames 8] [--yes]');
   process.exit(2);
 }
 
@@ -36,8 +38,13 @@ console.log(`frames: ${allFrames.length} total, ${sampled.length} sampled`);
 const { chat, segmentImage } = await import('@worldlens/model-adapters');
 const b64 = (f: string) => readFileSync(join(framesDir, f)).toString('base64');
 
-// Pass 1: Spark lists visible discrete object categories on a few frames.
-const probeFrames = sampled.filter((_, i) => i % Math.max(1, Math.floor(sampled.length / 4)) === 0).slice(0, 4);
+// Pass 1: Spark lists distinct object categories across MANY frames so small
+// or briefly-visible objects are not missed. Union + canonicalize.
+const probeIdx = new Set<number>();
+for (let i = 0; i < probeCount; i++) {
+  probeIdx.add(Math.min(sampled.length - 1, Math.floor((i * sampled.length) / probeCount)));
+}
+const probeFrames = [...probeIdx].map((i) => sampled[i]);
 console.log(`spark pass on: ${probeFrames.join(', ')}`);
 const seen = new Set<string>();
 for (const f of probeFrames) {
@@ -46,7 +53,7 @@ for (const f of probeFrames) {
       {
         role: 'user',
         content: [
-          { type: 'text', text: `List the discrete physical objects visible in this indoor frame as a JSON array of short noun phrases (e.g. ["bed","chair","door"]). Only clearly visible objects. No explanation.` },
+          { type: 'text', text: `List the distinct physical object categories visible in this indoor frame as a JSON array of short canonical noun phrases (e.g. ["bed","chair","door"]). Rules: merge synonyms into ONE phrase (bag/handbag -> "handbag"); skip walls/floor/ceiling unless a distinct fixture (window, curtain, air conditioner); only clearly visible objects. No explanation.` },
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64(f)}` } },
         ],
       },
@@ -70,7 +77,8 @@ for (const f of probeFrames) {
     console.log(`  spark output unparseable for ${f}, skipping`);
   }
 }
-const labels = [...seen].slice(0, 8);
+const canon = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+const labels = [...new Set([...seen].map(canon))].filter(Boolean).slice(0, maxLabels);
 console.log(`labels: ${labels.join(', ') || '(none)'}`);
 if (labels.length === 0) {
   console.log('No labels found; writing empty index.');
@@ -98,25 +106,63 @@ for (const label of labels) {
   }
 }
 
-// Merge: one entity per label with all supporting frames.
+// Merge: one entity per label with all supporting frames. Preserve existing
+// entities (stable ids, registered positions, provenance) across re-runs;
+// only add genuinely new labels.
 const byLabel = new Map<string, Detection[]>();
 for (const d of detections) {
   if (!byLabel.has(d.label)) byLabel.set(d.label, []);
   byLabel.get(d.label)!.push(d);
 }
-const entities = [...byLabel.entries()].map(([label, ds], i) => ({
-  id: `obj_${String(i + 1).padStart(2, '0')}`,
-  type: 'object',
-  label,
-  status: 'identified',
-  position: null as null,
-  evidence: { frames: [...new Set(ds.map((d) => d.frameIdx))].sort((a, b) => a - b) },
-}));
+interface ExistingEntity {
+  id: string; type: string; label: string; status: string;
+  position: [number, number, number] | null;
+  spatialRegistrationStatus?: string; coordinateProvenance?: string | null;
+  evidence: { frames: number[] };
+}
+let prev: { entities: ExistingEntity[]; relationships: unknown[]; viewpoints: unknown[]; coverage?: unknown } | null = null;
+try {
+  prev = JSON.parse(readFileSync(join(storage, 'index', `${sceneId}.json`), 'utf8'));
+} catch { /* first run */ }
+const prevByLabel = new Map((prev?.entities ?? []).map((e) => [e.label, e]));
+let nextN = 1;
+for (const e of prevByLabel.values()) {
+  const m = e.id.match(/^obj_(\d+)$/);
+  if (m) nextN = Math.max(nextN, parseInt(m[1], 10) + 1);
+}
+const entities: ExistingEntity[] = [];
+for (const [label, ds] of byLabel.entries()) {
+  const old = prevByLabel.get(label);
+  const frames = [...new Set(ds.map((d) => d.frameIdx))].sort((a, b) => a - b);
+  if (old) {
+    entities.push({ ...old, evidence: { frames } });
+  } else {
+    entities.push({
+      id: `obj_${String(nextN++).padStart(2, '0')}`,
+      type: 'object',
+      label,
+      status: 'identified',
+      position: null,
+      evidence: { frames },
+    });
+  }
+}
+// Keep previously indexed entities that simply had no detections this pass
+// (different sample), so knowledge only grows.
+for (const [label, old] of prevByLabel.entries()) {
+  if (!byLabel.has(label)) entities.push(old);
+}
 
 // Persist index + sidecar + frame copies for evidence thumbnails.
+// Existing relationships / viewpoints / coverage are preserved.
 const indexDir = join(storage, 'index');
 mkdirSync(indexDir, { recursive: true });
-writeFileSync(join(indexDir, `${sceneId}.json`), JSON.stringify({ entities, relationships: [], viewpoints: [] }, null, 2));
+writeFileSync(join(indexDir, `${sceneId}.json`), JSON.stringify({
+  entities,
+  relationships: prev?.relationships ?? [],
+  viewpoints: prev?.viewpoints ?? [],
+  ...(prev && 'coverage' in prev ? { coverage: (prev as { coverage: unknown }).coverage } : {}),
+}, null, 2));
 writeFileSync(join(indexDir, `${sceneId}.detections.json`), JSON.stringify(detections, null, 2));
 const framesOut = join(storage, 'assets', sceneId, 'frames');
 mkdirSync(framesOut, { recursive: true });
