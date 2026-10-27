@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import JobStatus from '@/components/JobStatus';
-import SceneViewer from '@/components/SceneViewer';
+import SceneWorkspace from '@/components/SceneWorkspace';
 import { getScene, latestJobForScene } from '@/lib/store';
 
 /**
@@ -22,13 +22,13 @@ export default async function ScenePage({ params }: { params: Promise<{ id: stri
           {job ? `job ${job.status}` : 'no processing job'}
         </p>
       </header>
-      <div className="flex flex-1 flex-col gap-4 overflow-auto p-6 lg:flex-row">
-        <div className="min-h-96 flex-1 rounded-md border border-neutral-800">
-          <SceneViewer sceneId={id} />
-        </div>
-        <aside className="w-full max-w-sm space-y-4">
-          {job && <JobStatus jobId={job.id} />}
-        </aside>
+      <div className="flex flex-1 flex-col overflow-auto">
+        {job && job.status !== 'ready' && (
+          <div className="px-6 pt-4">
+            <JobStatus jobId={job.id} />
+          </div>
+        )}
+        <SceneWorkspace sceneId={id} />
       </div>
     </main>
   );
