@@ -14,5 +14,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playcanvas/splat-transform": "^3.10.3"
   }
 }

@@ -69,8 +69,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         const res = await fetch(`/api/scenes/${encodeURIComponent(sceneId)}`);
         if (!res.ok) throw new Error(`Scene lookup failed (${res.status})`);
         const data = (await res.json()) as { manifest: Manifest | null };
+        const manifest = data.manifest;
         if (cancelled) return;
-        if (!data.manifest) {
+        if (!manifest) {
           setStatus('empty');
           return;
         }
@@ -82,8 +83,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         );
         const { SparkRenderer, SplatMesh, SplatFileType } = await import(
           '@sparkjsdev/spark',
-        );
-        if (cancelled) return;
+        );        if (cancelled) return;
 
         const renderer = new THREE.WebGLRenderer({ antialias: false });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -140,15 +140,27 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         };
 
         const mesh = new SplatMesh({
-          url: data.manifest.asset.location,
+          url: manifest.asset.location,
           // API URLs carry no file extension — declare the format explicitly
           // instead of relying on URL sniffing.
-          fileType: SplatFileType.PLY,
+          fileType:
+            manifest.asset.format === 'spz'
+              ? SplatFileType.SPZ
+              : SplatFileType.PLY,
           onLoad: () => {
             if (cancelled) return;
-            try {
-              const geo = (mesh as unknown as { geometry?: THREE.BufferGeometry })
-                .geometry;
+            // Prefer the derived overview viewpoint (real poses); fall back
+            // to the splat bounds, then to the default camera.
+            const vp = (manifest.viewpoints ?? []).find(
+              (v) => v.position && v.target,
+            );
+            if (vp?.position && vp?.target) {
+              camera.position.set(...vp.position);
+              controls.target.set(...vp.target);
+            } else {
+              try {
+                const geo = (mesh as unknown as { geometry?: THREE.BufferGeometry })
+                  .geometry;
               const sphere =
                 geo?.boundingSphere ??
                 (geo?.computeBoundingSphere?.(), geo?.boundingSphere);
@@ -160,9 +172,10 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
                   sphere.center.z + r * 1.1,
                 );
                 controls.target.copy(sphere.center);
+                }
+              } catch {
+                // Keep the default camera; user can orbit freely.
               }
-            } catch {
-              // Keep the default camera; user can orbit freely.
             }
             setStatus('ready');
             needsRender = true;

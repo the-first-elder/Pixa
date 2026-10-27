@@ -153,16 +153,22 @@ def cmd_run_job(args: argparse.Namespace) -> int:
 def cmd_import_asset(args: argparse.Namespace) -> int:
     """Import a REAL externally-produced asset (runpod/kiri/manual) with verification.
 
-    Validates the PLY header, copies it under STORAGE_DIR, and records a ready
-    reconstruction job. Never marks ready without a verified artifact.
+    Validates the artifact (PLY magic header; size sanity for all formats),
+    copies it under STORAGE_DIR, and records a ready reconstruction job.
+    Never marks ready without a verified artifact.
     """
     if not os.path.exists(args.asset):
         print(f"ASSET NOT FOUND: {args.asset}", file=sys.stderr)
         return 2
-    with open(args.asset, "rb") as f:
-        header = f.read(1500).decode("ascii", "replace")
-    if not header.startswith("ply\n") or "element vertex" not in header:
-        print(f"NOT A VALID SPLAT PLY: {args.asset}", file=sys.stderr)
+    ext = os.path.splitext(args.asset)[1].lower()
+    if ext == ".ply":
+        with open(args.asset, "rb") as f:
+            header = f.read(1500).decode("ascii", "replace")
+        if not header.startswith("ply\n") or "element vertex" not in header:
+            print(f"NOT A VALID SPLAT PLY: {args.asset}", file=sys.stderr)
+            return 2
+    elif ext not in (".spz", ".sog", ".ksplat", ".splat", ".glb"):
+        print(f"UNSUPPORTED ASSET FORMAT {ext or '(none)'}: {args.asset}", file=sys.stderr)
         return 2
     if os.path.getsize(args.asset) < 1024:
         print(f"ASSET SUSPICIOUSLY SMALL: {args.asset}", file=sys.stderr)
@@ -186,7 +192,7 @@ def cmd_import_asset(args: argparse.Namespace) -> int:
     jobs = store._load("jobs.json")
     jobs[job["id"]]["asset"] = {
         "assetPath": dest,
-        "format": "ply",
+        "format": ext.lstrip(".") or "ply",
         "posesPath": args.poses,
         "posesFormat": args.poses_format,
     }
