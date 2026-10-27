@@ -33,6 +33,19 @@ Rule: never fake reconstruction. Mesh only as honestly-labeled interim.
 This supersedes the old "do not train on Mac" line: Spirula (Aug 2026) postdates it.
 Local-COLMAP-sparse + OpenSplat remains a disk-constrained fallback (needs ≥10 GB freed).
 
+## Spirula status: INSTALLED + smoke-tested (2026-10-27, $0)
+
+- Binary: `spirula` v2026.10.16 (macOS ARM64, 150 MB) at `~/.worldlens/bin/spirula`
+  (`WL_SPIRULA_BIN` overrides). Vulkan/MoltenVK device confirmed working.
+- CLI contract verified live: `sfm auto IMAGES -o WORKSPACE` → COLMAP-format
+  `sparse/0`; `train --data WORKSPACE --data-format colmap --num-iterations N` → `.ply`.
+- Backend implemented: `services/reconstruction/worker/backends/spirula.py`
+  (extract → sfm → train → newest `.ply`; `--iterations` configurable; 2 h SfM / 6 h
+  train guardrails; missing-binary and low-frame-count failures are explicit).
+- Failure path proven on synthetic footage: SfM correctly rejected footage with
+  no multi-view geometry (`SPIRULA_FAILED`, transitions recorded, no fake success).
+- Training quality on REAL footage is untested — needs Fixture A.
+
 ## Ranked plan (cheapest reliable first)
 
 1. **$0 now: Spirula Studio macOS binary on a 30 s real clip** (frame extract + SfM + train in one binary). If quality holds → primary local path.

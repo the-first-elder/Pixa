@@ -33,7 +33,7 @@ export async function POST(
   } catch {
     // Defaults stand.
   }
-  if (!['local', 'kiri', 'runpod'].includes(backend)) {
+  if (!['local', 'kiri', 'runpod', 'spirula'].includes(backend)) {
     return NextResponse.json({ error: `Unknown backend: ${backend}` }, { status: 400 });
   }
 

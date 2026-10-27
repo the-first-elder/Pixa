@@ -10,8 +10,10 @@ from . import media, store
 from .backends.local import LocalBackend
 from .backends.kiri import KiriBackend
 from .backends.runpod import RunpodBackend
+from .backends.spirula import SpirulaBackend
 
-BACKENDS = {"local": LocalBackend, "kiri": KiriBackend, "runpod": RunpodBackend}
+BACKENDS = {"local": LocalBackend, "kiri": KiriBackend, "runpod": RunpodBackend,
+            "spirula": SpirulaBackend}
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
@@ -38,7 +40,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 def execute_job(job_id: str, video: str, backend_name: str,
                 asset: str | None = None, poses: str | None = None,
-                allow_spend: bool = False) -> dict[str, Any]:
+                allow_spend: bool = False, iterations: int = 30000) -> dict[str, Any]:
     """Run the pipeline for an EXISTING job record. Shared by `process` and `run-job`."""
     backend_cls = BACKENDS.get(backend_name)
     if backend_cls is None:
@@ -48,14 +50,14 @@ def execute_job(job_id: str, video: str, backend_name: str,
     backend = backend_cls()
     job = store.get_job(job_id)
     ctx = {"video": video, "asset": asset, "poses": poses, "job": job,
-           "allowSpend": allow_spend}
+           "allowSpend": allow_spend, "iterations": iterations}
     try:
         handle = backend.submit(job, ctx)
     except RuntimeError as e:
         msg, code = str(e), str(e).split(":")[0]
         return store.transition(job_id, "failed", progress=None,
                                 errorCode=code, errorMessage=msg)
-    if backend_name == "local" and hasattr(backend, "run"):
+    if hasattr(backend, "run"):
         return backend.run(job_id, handle)  # type: ignore[attr-defined]
     # Async backends (kiri/runpod): handle persisted for polling.
     jobs = store._load("jobs.json")
@@ -122,7 +124,7 @@ def cmd_process(args: argparse.Namespace) -> int:
     print(json.dumps({"sceneId": scene["id"], "jobId": job["id"], "status": "queued"}))
 
     job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
-                      allow_spend=args.allow_spend)
+                      allow_spend=args.allow_spend, iterations=args.iterations)
     if args.backend in ("kiri", "runpod") and job["status"] == "queued":
         print(json.dumps({"jobId": job["id"], "status": "submitted, poll for completion"}))
         return 0
@@ -138,7 +140,7 @@ def cmd_run_job(args: argparse.Namespace) -> int:
         print(f"UNKNOWN JOB: {args.job_id}", file=sys.stderr)
         return 2
     job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
-                      allow_spend=args.allow_spend)
+                      allow_spend=args.allow_spend, iterations=args.iterations)
     print(json.dumps({"jobId": job["id"], "status": job["status"]}))
     return 0 if job["status"] == "ready" else 1
 
@@ -167,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--poses", default=None, help="runpod: path to transforms.json")
     r.add_argument("--allow-spend", action="store_true",
                    help="Opt in to spending KIRI credits (kiri backend only)")
+    r.add_argument("--iterations", type=int, default=30000,
+                   help="Training iterations (spirula backend)")
     r.set_defaults(fn=cmd_process)
     u = sub.add_parser("run-job", help="Run pipeline for an existing job record")
     u.add_argument("job_id")
@@ -176,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--poses", default=None)
     u.add_argument("--allow-spend", action="store_true",
                    help="Opt in to spending KIRI credits (kiri backend only)")
+    u.add_argument("--iterations", type=int, default=30000,
+                   help="Training iterations (spirula backend)")
     u.set_defaults(fn=cmd_run_job)
     w = sub.add_parser("poll", help="Poll an async backend job; fetch asset when done")
     w.add_argument("job_id")
