@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Env & secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# Data & artifacts (large, local only)
+fixtures/demo-scene/*.mp4
+fixtures/demo-scene/*.mov
+data/
+*.ply
+*.splat
+*.ksplat
+*.pt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
