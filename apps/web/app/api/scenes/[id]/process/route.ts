@@ -29,12 +29,16 @@ export async function POST(
   let asset: string | undefined;
   let poses: string | undefined;
   let allowPartial = false;
+  let iterations = 30000;
   try {
     const body = await req.json();
     if (typeof body?.backend === 'string') backend = body.backend;
     if (typeof body?.asset === 'string') asset = body.asset;
     if (typeof body?.poses === 'string') poses = body.poses;
     if (body?.allowPartial === true) allowPartial = true;
+    if (typeof body?.iterations === 'number' && Number.isFinite(body.iterations)) {
+      iterations = Math.min(50000, Math.max(1000, Math.round(body.iterations)));
+    }
   } catch {
     // Defaults stand.
   }
@@ -49,7 +53,8 @@ export async function POST(
     );
   }
   const job = createJob(scene.id, 'reconstruction');
-  const args = ['run-job', job.id, '--video', video, '--backend', backend];
+  const args = ['run-job', job.id, '--video', video, '--backend', backend,
+    '--iterations', String(iterations)];
   if (asset) args.push('--asset', asset);
   if (poses) args.push('--poses', poses);
   if (allowPartial) args.push('--allow-partial');

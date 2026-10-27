@@ -14,8 +14,11 @@ export default function UploadForm() {
   const [name, setName] = useState('');
   const [phase, setPhase] = useState<'idle' | 'creating' | 'uploading' | 'starting' | 'error'>('idle');
   const [backend, setBackend] = useState('spirula');
+  const [quality, setQuality] = useState('fast');
   const [allowPartial, setAllowPartial] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  const iterations = quality === 'full' ? 30000 : quality === 'balanced' ? 15000 : 7000;
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
@@ -66,7 +69,7 @@ export default function UploadForm() {
       const procRes = await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend, allowPartial }),
+        body: JSON.stringify({ backend, allowPartial, iterations }),
       });
       if (!procRes.ok) {
         const body = (await procRes.json().catch(() => null)) as { error?: string } | null;
@@ -120,6 +123,19 @@ export default function UploadForm() {
           <option value="local">Local FFmpeg+COLMAP — needs colmap binary</option>
           <option value="kiri">KIRI hosted API — spends credits (needs key)</option>
           <option value="runpod">RunPod cloud GPU — needs pod + asset</option>
+        </select>
+      </div>
+      <div>
+        <label htmlFor="quality" className="text-sm text-neutral-400">Quality (training time)</label>
+        <select
+          id="quality"
+          value={quality}
+          onChange={(e) => setQuality(e.target.value)}
+          className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        >
+          <option value="fast">Fast preview — ~7k iterations, minutes (good for drafts)</option>
+          <option value="balanced">Balanced — ~15k iterations</option>
+          <option value="full">Full — 30k iterations, best quality (slow)</option>
         </select>
       </div>
       <div className="flex items-center gap-2">
