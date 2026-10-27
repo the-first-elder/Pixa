@@ -363,6 +363,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         const flatDir = new THREE.Vector3();
         const raycaster = new THREE.Raycaster();
         const downDir = new THREE.Vector3(0, -1, 0);
+        const upDir = new THREE.Vector3(0, 1, 0);
         const snapEuler = new THREE.Euler(0, 0, 0, 'YXZ');
         // Entering rooms mode drops you into a body: floor-snap to eye
         // height and level the view to horizontal, so it reads as standing
@@ -447,6 +448,19 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
               const targetY = hits[0].point.y + eyeOffsetRef.current;
               camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 6);
               needsRender = true;
+            }
+            // Ceiling clamp: never rise through the ceiling in first person.
+            // Uses the collision mesh; unknown overhead stays passable rather
+            // than inventing a barrier.
+            raycaster.set(camera.position, upDir);
+            raycaster.far = eyeOffsetRef.current + 0.6;
+            const overhead = raycaster.intersectObjects(colliders, false);
+            if (overhead.length > 0) {
+              const capY = overhead[0].point.y - 0.18;
+              if (camera.position.y > capY) {
+                camera.position.y = capY;
+                needsRender = true;
+              }
             }
             // Stay inside the capture volume.
             const off = camera.position.clone().sub(boundCenter);
@@ -541,8 +555,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
             type="button"
             onClick={() => setModeRef.current('orbit')}
             className={`rounded px-2 py-1 ${mode === 'orbit' ? 'bg-white text-black' : 'text-neutral-300'}`}
+            title="Overview: inspect the reconstruction from outside or above"
           >
-            Orbit
+            Overview
           </button>
           <button
             type="button"
@@ -565,7 +580,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
             <span className="px-2 text-neutral-500">drag to look · WASD to move · free-fly, no collision</span>
           )}
           {mode === 'rooms' && (
-            <span className="px-2 text-neutral-500">drag to look · WASD to walk · +/− eye height · experimental proxy collision</span>
+            <span className="px-2 text-neutral-500">drag to look · WASD to walk · +/− eye height · stays inside, walls + ceiling constrain</span>
           )}
         </div>
       )}

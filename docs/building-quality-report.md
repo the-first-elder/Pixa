@@ -49,7 +49,14 @@ Load, 360° look, slow + fast rotation, rooms walk (W/A/S/D), tour transitions, 
 
 Orbit / fly / eye-level rooms walk with wall slide + floor snap; NL navigation to 4 pose-derived viewpoints; object highlight markers at triangulated positions; evidence-viewpoint flights for unregistered detections; guided tours; voice input; coverage badges with gap-aware refusal; measurement in units + meter calibration flow.
 
-## 7. Addendum: in-motion quality investigation (2026-10-28)
+## 8. Addendum: interior containment (2026-10-28)
+
+Complaint: exterior imagery visible when moving up/outside.
+
+**Reproduction results**: looking up shows the real ceiling (fan, light, poster — good coverage); fly-up stays inside via the volume clamp; wheel-zoom was suspected broken but verified working (harness delivery issue, not app code).
+**Cause of exterior exposure**: orbit zoom-out and free flight can leave the room volume; splats span x −2..6.9 / y −2.8..3.8 / z −4.4..2.4 (sampled) while the capture trajectory spans ~2 — far splats are legitimate walls/floor/ceiling seen from inside, not removable background. Per the spec's own warning, no box-filter was applied (it would cut real walls).
+**Implemented**: Orbit renamed to Overview (explicit outside mode); Rooms is first-person with floor snap + wall slide + new ceiling clamp (raycast up, capped below ceiling; unknown overhead stays passable); bounds clamp in all modes; AI flights and tours use the same validated controls.
+**Verified**: rooms walk screenshot shows coherent interior at eye level, 0 console errors.
 
 Complaint: scene looks good stationary, degrades when moving.
 
