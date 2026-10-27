@@ -186,20 +186,51 @@ def _viewer_port_busy() -> bool:
 
 
 def _train_and_watch(binpath: str, workspace: str, iterations: int,
-                     workdir: str, timeout: int) -> str:
+                     workdir: str, timeout: int, job_id: str) -> str:
     """Train to completion, then STOP the process.
 
     `spirula train` intentionally stays alive after training ("Viewer still
     running -- press Ctrl-C to exit"). So: stream to train.log, watch for the
     "Training complete" marker, then terminate the whole process group.
     Returns the train.log path. Raises SpirulaError on timeout/failure text.
+
+    One trainer per machine (fixed viewer port): instead of failing when the
+    slot is busy, WAIT in line — the job record carries waitingForTrainer so
+    the UI can show queue position instead of an error.
     """
-    if _viewer_port_busy():
-        raise SpirulaError(
-            "TRAINING_BUSY: another reconstruction is already training on this "
-            "machine (Spirula uses one fixed viewer port). Wait for it to finish, "
-            "then retry this job."
-        )
+    waited = 0
+    wait_logged = False
+    while _viewer_port_busy():
+        # A cancel while queued must stop the wait — not train a dead job.
+        try:
+            current = store.get_job(job_id)
+            if current["status"] == "failed":
+                return None
+        except KeyError:
+            raise SpirulaError("Job record disappeared while queued for the trainer.")
+        if waited == 0 or waited % 10 == 0:
+        if waited == 0 or waited % 10 == 0:
+            jobs = store._load("jobs.json")
+            if job_id in jobs:
+                jobs[job_id]["waitingForTrainer"] = True
+                jobs[job_id]["waitingSince"] = store.now()
+                store._save("jobs.json", jobs)
+        if not wait_logged:
+            with open(os.path.join(workdir, "train.log"), "w", encoding="utf-8") as log:
+                log.write("Waiting for the trainer slot (another job is training)...\n")
+            wait_logged = True
+        time.sleep(20)
+        waited += 1
+        if waited * 20 > timeout:
+            raise SpirulaError(
+                "TRAINING_BUSY: waited over the limit and the trainer slot never "
+                "freed up. Retry later, or cancel the blocking job."
+            )
+    jobs = store._load("jobs.json")
+    if job_id in jobs:
+        jobs[job_id].pop("waitingForTrainer", None)
+        jobs[job_id].pop("waitingSince", None)
+        store._save("jobs.json", jobs)
     log_path = os.path.join(workdir, "train.log")
     cmd = [binpath, "train", "--data", workspace, "--data-format", "colmap",
            "--num-iterations", str(iterations),
@@ -209,6 +240,18 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
         log.flush()
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
+    # Record the trainer so the operator can cancel it (cancel = SIGTERM the group).
+    try:
+        jobs = store._load("jobs.json")
+        if job_id in jobs:
+            jobs[job_id]["trainPid"] = proc.pid
+            try:
+                jobs[job_id]["trainPgid"] = os.getpgid(proc.pid)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            store._save("jobs.json", jobs)
+    except OSError:
+        pass
     deadline = time.time() + timeout
     try:
         while True:
@@ -242,6 +285,16 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
+        try:
+            jobs = store._load("jobs.json")
+            if job_id in jobs:
+                jobs[job_id].pop("trainPid", None)
+                jobs[job_id].pop("trainPgid", None)
+                jobs[job_id].pop("waitingForTrainer", None)
+                jobs[job_id].pop("waitingSince", None)
+                store._save("jobs.json", jobs)
+        except OSError:
+            pass
 
 
 def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
@@ -397,11 +450,20 @@ class SpirulaBackend:
                                   os.path.join(partial, "sparse", "0"))
                 train_workspace = partial
             store.transition(job_id, "reconstructing", progress=50)
-            _train_and_watch(binpath, train_workspace, handle["iterations"],
-                             workdir, TRAIN_TIMEOUT)
+            watched = _train_and_watch(binpath, train_workspace, handle["iterations"],
+                                       workdir, TRAIN_TIMEOUT, job_id)
+            if watched is None:
+                return store.get_job(job_id)  # cancelled while queued
             return finalize_job(job_id, workdir, train_workspace if train_workspace != workspace else None,
                                 partial=train_workspace != workspace)
         except (SpirulaError, media.MediaError, OSError) as e:
+            # A cancel that landed mid-flight already set the terminal state —
+            # never overwrite CANCELLED with a derivative error.
+            try:
+                if store.get_job(job_id)["status"] == "failed":
+                    return store.get_job(job_id)
+            except KeyError:
+                pass
             msg = str(e)[:500]
             code = "SPIRULA_FAILED"
             for prefix in ("SPIRULA_", "NO_", "COVERAGE_", "TRAINING_"):

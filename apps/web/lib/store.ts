@@ -42,6 +42,8 @@ export interface ProcessingJob {
   diagnostics: unknown;
   transitions: JobTransition[];
   backendHandle?: unknown;
+  waitingForTrainer?: boolean;
+  waitingSince?: string;
 }
 
 export interface Scene {

@@ -70,6 +70,39 @@ def execute_job(job_id: str, video: str, backend_name: str,
     return store.get_job(job_id)
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Cancel a running job: SIGTERM its trainer process group, mark failed/CANCELLED."""
+    import os as _os
+    import signal as _signal
+    try:
+        job = store.get_job(args.job_id)
+    except KeyError:
+        print(f"UNKNOWN JOB: {args.job_id}", file=sys.stderr)
+        return 2
+    if job["status"] in ("ready", "failed"):
+        print(json.dumps({"jobId": job["id"], "status": job["status"], "note": "already terminal"}))
+        return 0
+    pgid = job.get("trainPgid") or job.get("trainPid")
+    if pgid is not None:
+        try:
+            _os.killpg(int(pgid), _signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                _os.kill(int(pgid), _signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+    jobs = store._load("jobs.json")
+    if job["id"] in jobs:
+        for k in ("trainPid", "trainPgid", "waitingForTrainer", "waitingSince", "backendHandle"):
+            jobs[job["id"]].pop(k, None)
+        store._save("jobs.json", jobs)
+    job = store.transition(job["id"], "failed", progress=None,
+                           errorCode="CANCELLED",
+                           errorMessage="Cancelled by operator. Partial outputs (if any) were not promoted to an asset.")
+    print(json.dumps({"jobId": job["id"], "status": job["status"]}))
+    return 0
+
+
 def cmd_poll(args: argparse.Namespace) -> int:
     """Poll an async backend job (kiri/runpod): update state, fetch asset when done."""
     try:
@@ -263,6 +296,9 @@ def main(argv: list[str] | None = None) -> int:
     w = sub.add_parser("poll", help="Poll an async backend job; fetch asset when done")
     w.add_argument("job_id")
     w.set_defaults(fn=cmd_poll)
+    c = sub.add_parser("cancel", help="Cancel a running job (stops its trainer)")
+    c.add_argument("job_id")
+    c.set_defaults(fn=cmd_cancel)
     i = sub.add_parser("import-asset", help="Import a verified external asset as a ready job")
     i.add_argument("--scene", default=None, help="existing scene id (default: create)")
     i.add_argument("--name", default="Imported scene")
