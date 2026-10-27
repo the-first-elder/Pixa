@@ -1,0 +1,126 @@
+'use client';
+
+import { useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
+
+/**
+ * Capture flow (PRD §6.2): name → select video → create scene → upload with
+ * continuous progress → start processing → scene page. Every failure surfaces
+ * the server's message; nothing proceeds silently.
+ */
+export default function UploadForm() {
+  const router = useRouter();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState('');
+  const [phase, setPhase] = useState<'idle' | 'creating' | 'uploading' | 'starting' | 'error'>('idle');
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const file = fileRef.current?.files?.[0];
+    if (!file) {
+      setError('Select a video file first (.mp4 or .mov).');
+      setPhase('error');
+      return;
+    }
+    setError(null);
+    try {
+      setPhase('creating');
+      const createRes = await fetch('/api/scenes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() || 'Untitled scene' }),
+      });
+      if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
+      const { sceneId } = (await createRes.json()) as { sceneId: string };
+
+      setPhase('uploading');
+      setProgress(0);
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/scenes/${sceneId}/upload`);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) setProgress(Math.round((ev.loaded / ev.total) * 100));
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else {
+            try {
+              const body = JSON.parse(xhr.responseText) as { error?: string };
+              reject(new Error(body.error ?? `Upload failed (${xhr.status})`));
+            } catch {
+              reject(new Error(`Upload failed (${xhr.status})`));
+            }
+          }
+        };
+        xhr.onerror = () => reject(new Error('Upload connection failed'));
+        const form = new FormData();
+        form.append('video', file);
+        xhr.send(form);
+      });
+
+      setPhase('starting');
+      const procRes = await fetch(`/api/scenes/${sceneId}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend: 'local' }),
+      });
+      if (!procRes.ok) {
+        const body = (await procRes.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Processing start failed (${procRes.status})`);
+      }
+      router.push(`/scenes/${sceneId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setPhase('error');
+    }
+  }
+
+  const busy = phase === 'creating' || phase === 'uploading' || phase === 'starting';
+
+  return (
+    <form onSubmit={submit} className="mt-8 space-y-4">
+      <div>
+        <label htmlFor="scene-name" className="text-sm text-neutral-400">Scene name</label>
+        <input
+          id="scene-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Main workshop"
+          className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        />
+      </div>
+      <div>
+        <label htmlFor="video" className="text-sm text-neutral-400">Video (.mp4 / .mov, short indoor capture)</label>
+        <input
+          id="video"
+          ref={fileRef}
+          type="file"
+          accept="video/mp4,video/quicktime,.mp4,.mov"
+          className="mt-1 w-full text-sm"
+        />
+      </div>
+      {phase === 'uploading' && (
+        <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
+          <div className="h-full bg-white transition-all" style={{ width: `${progress}%` }} />
+        </div>
+      )}
+      {phase !== 'idle' && phase !== 'error' && (
+        <p className="text-sm text-neutral-500">
+          {phase === 'creating' && 'Creating scene…'}
+          {phase === 'uploading' && `Uploading… ${progress}%`}
+          {phase === 'starting' && 'Starting reconstruction…'}
+        </p>
+      )}
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      <button
+        type="submit"
+        disabled={busy}
+        className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
+      >
+        Upload and reconstruct
+      </button>
+    </form>
+  );
+}

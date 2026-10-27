@@ -36,6 +36,32 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def execute_job(job_id: str, video: str, backend_name: str,
+                asset: str | None = None, poses: str | None = None) -> dict[str, Any]:
+    """Run the pipeline for an EXISTING job record. Shared by `process` and `run-job`."""
+    backend_cls = BACKENDS.get(backend_name)
+    if backend_cls is None:
+        return store.transition(job_id, "failed", progress=None,
+                                errorCode="UNKNOWN_BACKEND",
+                                errorMessage=f"Unknown backend: {backend_name}")
+    backend = backend_cls()
+    job = store.get_job(job_id)
+    ctx = {"video": video, "asset": asset, "poses": poses, "job": job}
+    try:
+        handle = backend.submit(job, ctx)
+    except RuntimeError as e:
+        msg, code = str(e), str(e).split(":")[0]
+        return store.transition(job_id, "failed", progress=None,
+                                errorCode=code, errorMessage=msg)
+    if backend_name == "local" and hasattr(backend, "run"):
+        return backend.run(job_id, handle)  # type: ignore[attr-defined]
+    # Async backends (kiri/runpod): handle persisted for polling.
+    jobs = store._load("jobs.json")
+    jobs[job_id]["backendHandle"] = handle
+    store._save("jobs.json", jobs)
+    return store.get_job(job_id)
+
+
 def cmd_process(args: argparse.Namespace) -> int:
     try:
         meta = media.probe_video(args.video)
@@ -47,33 +73,24 @@ def cmd_process(args: argparse.Namespace) -> int:
     store.transition(job["id"], "uploaded", progress=5)
     print(json.dumps({"sceneId": scene["id"], "jobId": job["id"], "status": "queued"}))
 
-    backend_cls = BACKENDS.get(args.backend)
-    if backend_cls is None:
-        store.transition(job["id"], "failed", progress=None,
-                         errorCode="UNKNOWN_BACKEND",
-                         errorMessage=f"Unknown backend: {args.backend}")
-        return 2
-    backend = backend_cls()
-    ctx = {"video": args.video, "asset": args.asset, "poses": args.poses,
-           "scene": scene, "job": job}
+    job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses)
+    if args.backend in ("kiri", "runpod") and job["status"] == "queued":
+        print(json.dumps({"jobId": job["id"], "status": "submitted, poll for completion"}))
+        return 0
+    print(json.dumps({"jobId": job["id"], "status": job["status"]}))
+    return 0 if job["status"] == "ready" else 1
+
+
+def cmd_run_job(args: argparse.Namespace) -> int:
+    """Execute the pipeline for a job created elsewhere (e.g., the web API)."""
     try:
-        handle = backend.submit(job, ctx)
-    except RuntimeError as e:
-        msg, code = str(e), str(e).split(":")[0]
-        store.transition(job["id"], "failed", progress=None,
-                         errorCode=code, errorMessage=msg)
-        print(f"JOB {job['id']} FAILED [{code}]: {msg}", file=sys.stderr)
-        return 1
-    if args.backend == "local" and hasattr(backend, "run"):
-        job = backend.run(job["id"], handle)  # type: ignore[attr-defined]
-        print(json.dumps({"jobId": job["id"], "status": job["status"]}))
-        return 0 if job["status"] == "ready" else 1
-    # Async backends (kiri/runpod): handle persisted for polling (Stage 1/2 wiring).
-    jobs = store._load("jobs.json")
-    jobs[job["id"]]["backendHandle"] = handle
-    store._save("jobs.json", jobs)
-    print(json.dumps({"jobId": job["id"], "status": "submitted, poll for completion"}))
-    return 0
+        job = store.get_job(args.job_id)
+    except KeyError:
+        print(f"UNKNOWN JOB: {args.job_id}", file=sys.stderr)
+        return 2
+    job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses)
+    print(json.dumps({"jobId": job["id"], "status": job["status"]}))
+    return 0 if job["status"] == "ready" else 1
 
 
 def cmd_jobs(_args: argparse.Namespace) -> int:
@@ -99,6 +116,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--asset", default=None, help="runpod: path to real splat.ply")
     r.add_argument("--poses", default=None, help="runpod: path to transforms.json")
     r.set_defaults(fn=cmd_process)
+    u = sub.add_parser("run-job", help="Run pipeline for an existing job record")
+    u.add_argument("job_id")
+    u.add_argument("--video", required=True)
+    u.add_argument("--backend", choices=sorted(BACKENDS), default="local")
+    u.add_argument("--asset", default=None)
+    u.add_argument("--poses", default=None)
+    u.set_defaults(fn=cmd_run_job)
     j = sub.add_parser("jobs", help="List jobs + transitions")
     j.set_defaults(fn=cmd_jobs)
     args = ap.parse_args(argv)
