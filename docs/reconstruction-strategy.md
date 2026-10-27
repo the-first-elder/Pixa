@@ -1,7 +1,52 @@
-# 3D reconstruction strategy (verified 2026-10-27)
+# 3D reconstruction strategy (verified 2026-10-27, updated with KIRI key + OSS review)
 
 Constraint recap: M4 Pro, no CUDA, ~17 GB free disk, no GPU worker yet.
 Rule: never fake reconstruction. Mesh only as honestly-labeled interim.
+
+## KIRI account status
+
+- Key secured in repo `.env` as `KIRI_API_KEY` (gitignored, never committed, never frontend).
+- **Balance verified live: 10 credits. Spend so far: 0.**
+- Pricing confirmed from live docs: 1 call = 1 credit = $1, min $500 recharge, 10 free credits.
+- Endpoints implemented in `services/reconstruction/worker/backends/kiri.py` (verified against live docs):
+  `GET /v1/open/balance` · `POST /v1/open/3dgs/video` (≤1920×1080, ≤3 min, `isMesh`/`isMask`/`fileFormat`)
+  · `GET /v1/open/model/getStatus` (-1/0/3 running, 2 done, 1/4 failed)
+  · `GET /v1/open/model/getModelZip` (link valid 60 min).
+- **Credit guard:** `submit()` refuses without `--allow-spend`; pre-flight probe
+  (resolution/duration) + balance check run before any spend; camera poses
+  recorded as unavailable for KIRI jobs. Guard + error paths tested with zero spend.
+- Async flow: `worker process --backend kiri --allow-spend` → `worker poll <jobId>`
+  (repeat; transitions reconstructing → ready/failed, fetches + unzips asset on done).
+
+## Open-source review (researched 2026-10-27, nothing installed, $0 spent)
+
+| Option | What it is | Replaces KIRI reconstruction? |
+|---|---|---|
+| **OpenSplat** (`WebODM/OpenSplat`, AGPL-3.0, active) | 3DGS **trainer only** (needs COLMAP poses first); Metal/CPU build possible, CPU ~100× slower | Partially — as trainer in a COLMAP+trainer pipeline, not video-in one step |
+| **Splat Studio** (`CodeByKeegan/splat-studio`) | GUI for `@playcanvas/splat-transform`: convert/inspect only | **No** — no training/SfM/video input. Useful as the local PLY→SPZ/SOG converter |
+| **SplatStream** (`jaesung-cs/splatstream`) | Python Vulkan **renderer**, explicitly no training | **No**. Ignore (web uses Spark/Three) |
+| **Spirula Studio** (`harry7557558/spirula-studio`, GPL-3.0) | Cross-vendor trainer, **macOS/Apple Silicon validated Aug 2026**, single binary, built-in SfM + frame extraction from video, 10M Gaussians in 8GB VRAM | **Candidate $0 local path — validate on Fixture A first** |
+| Postshot | Desktop Windows + NVIDIA only | No (this machine) |
+| HF Spaces / Colab trainers | Stale/broken or session-limited | No (unreliable as pipeline) |
+| LichtFeld-Studio | Trains, but NVIDIA-only | No (this machine) |
+
+This supersedes the old "do not train on Mac" line: Spirula (Aug 2026) postdates it.
+Local-COLMAP-sparse + OpenSplat remains a disk-constrained fallback (needs ≥10 GB freed).
+
+## Ranked plan (cheapest reliable first)
+
+1. **$0 now: Spirula Studio macOS binary on a 30 s real clip** (frame extract + SfM + train in one binary). If quality holds → primary local path.
+2. **$0 smoke: 1 KIRI free credit on the same 30 s clip** (`isMesh=1,fileFormat=glb`) → inspect ZIP (splat PLY? mesh? poses?). Keeps 9 credits in reserve.
+3. **~$1–3 exit gate: RunPod RTX 3090 Secure** — `scripts/runpod_train.sh`
+   (`ns-process-data` → `splatfacto` 30k → `ns-export`) → PLY + `transforms.json`
+   → local convert (Splat Studio / `splat-transform`) → `.spz`/`.sog`. Poses + diagnostics included.
+4. Converter role only: Splat Studio / `splat-transform` for PLY→SPZ/SOG + inspection.
+
+## Next actions (owner)
+
+1. Record Fixture A + Fixture B per `docs/capture-protocol.md`.
+2. Approve the $0 Spirula trial + 1-credit KIRI smoke test on a 30 s cut of Fixture A.
+3. RunPod account when the reproducible GPU artifact is needed (~$1–3).
 
 ## Decision
 

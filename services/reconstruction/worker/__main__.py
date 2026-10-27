@@ -37,7 +37,8 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 
 def execute_job(job_id: str, video: str, backend_name: str,
-                asset: str | None = None, poses: str | None = None) -> dict[str, Any]:
+                asset: str | None = None, poses: str | None = None,
+                allow_spend: bool = False) -> dict[str, Any]:
     """Run the pipeline for an EXISTING job record. Shared by `process` and `run-job`."""
     backend_cls = BACKENDS.get(backend_name)
     if backend_cls is None:
@@ -46,7 +47,8 @@ def execute_job(job_id: str, video: str, backend_name: str,
                                 errorMessage=f"Unknown backend: {backend_name}")
     backend = backend_cls()
     job = store.get_job(job_id)
-    ctx = {"video": video, "asset": asset, "poses": poses, "job": job}
+    ctx = {"video": video, "asset": asset, "poses": poses, "job": job,
+           "allowSpend": allow_spend}
     try:
         handle = backend.submit(job, ctx)
     except RuntimeError as e:
@@ -57,9 +59,55 @@ def execute_job(job_id: str, video: str, backend_name: str,
         return backend.run(job_id, handle)  # type: ignore[attr-defined]
     # Async backends (kiri/runpod): handle persisted for polling.
     jobs = store._load("jobs.json")
-    jobs[job_id]["backendHandle"] = handle
+    jobs[job_id]["backendHandle"] = {**handle, "backend": backend_name}
     store._save("jobs.json", jobs)
     return store.get_job(job_id)
+
+
+def cmd_poll(args: argparse.Namespace) -> int:
+    """Poll an async backend job (kiri/runpod): update state, fetch asset when done."""
+    try:
+        job = store.get_job(args.job_id)
+    except KeyError:
+        print(f"UNKNOWN JOB: {args.job_id}", file=sys.stderr)
+        return 2
+    handle = job.get("backendHandle") or {}
+    backend_name = handle.get("backend")
+    backend_cls = BACKENDS.get(backend_name or "")
+    if backend_cls is None:
+        print(f"NO ASYNC BACKEND on job {args.job_id} (backend={backend_name!r})", file=sys.stderr)
+        return 2
+    backend = backend_cls()
+    try:
+        state, _progress, diagnostics = backend.status(handle)
+    except RuntimeError as e:
+        print(f"POLL ERROR: {e}", file=sys.stderr)
+        return 1
+    if diagnostics:
+        jobs = store._load("jobs.json")
+        jobs[job["id"]]["diagnostics"] = diagnostics
+        store._save("jobs.json", jobs)
+    if state == "done":
+        try:
+            asset = backend.fetch_asset(handle, os.path.join(store.storage_dir(), "assets", job["id"]))
+        except RuntimeError as e:
+            store.transition(job["id"], "failed", progress=None,
+                             errorCode="ASSET_FETCH_FAILED", errorMessage=str(e)[:300])
+            print(f"JOB {job['id']} FAILED [ASSET_FETCH_FAILED]", file=sys.stderr)
+            return 1
+        jobs = store._load("jobs.json")
+        jobs[job["id"]]["asset"] = asset
+        store._save("jobs.json", jobs)
+        store.transition(job["id"], "compressing", progress=90)
+        job = store.transition(job["id"], "ready", progress=100)
+    elif state == "failed":
+        job = store.transition(job["id"], "failed", progress=None,
+                               errorCode="BACKEND_FAILED",
+                               errorMessage=f"{backend_name} job reported failure.")
+    else:
+        job = store.transition(job["id"], "reconstructing", progress=None)
+    print(json.dumps({"jobId": job["id"], "status": job["status"]}))
+    return 0 if job["status"] == "ready" else 1
 
 
 def cmd_process(args: argparse.Namespace) -> int:
@@ -73,7 +121,8 @@ def cmd_process(args: argparse.Namespace) -> int:
     store.transition(job["id"], "uploaded", progress=5)
     print(json.dumps({"sceneId": scene["id"], "jobId": job["id"], "status": "queued"}))
 
-    job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses)
+    job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
+                      allow_spend=args.allow_spend)
     if args.backend in ("kiri", "runpod") and job["status"] == "queued":
         print(json.dumps({"jobId": job["id"], "status": "submitted, poll for completion"}))
         return 0
@@ -88,7 +137,8 @@ def cmd_run_job(args: argparse.Namespace) -> int:
     except KeyError:
         print(f"UNKNOWN JOB: {args.job_id}", file=sys.stderr)
         return 2
-    job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses)
+    job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
+                      allow_spend=args.allow_spend)
     print(json.dumps({"jobId": job["id"], "status": job["status"]}))
     return 0 if job["status"] == "ready" else 1
 
@@ -115,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--backend", choices=sorted(BACKENDS), default="local")
     r.add_argument("--asset", default=None, help="runpod: path to real splat.ply")
     r.add_argument("--poses", default=None, help="runpod: path to transforms.json")
+    r.add_argument("--allow-spend", action="store_true",
+                   help="Opt in to spending KIRI credits (kiri backend only)")
     r.set_defaults(fn=cmd_process)
     u = sub.add_parser("run-job", help="Run pipeline for an existing job record")
     u.add_argument("job_id")
@@ -122,7 +174,12 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--backend", choices=sorted(BACKENDS), default="local")
     u.add_argument("--asset", default=None)
     u.add_argument("--poses", default=None)
+    u.add_argument("--allow-spend", action="store_true",
+                   help="Opt in to spending KIRI credits (kiri backend only)")
     u.set_defaults(fn=cmd_run_job)
+    w = sub.add_parser("poll", help="Poll an async backend job; fetch asset when done")
+    w.add_argument("job_id")
+    w.set_defaults(fn=cmd_poll)
     j = sub.add_parser("jobs", help="List jobs + transitions")
     j.set_defaults(fn=cmd_jobs)
     args = ap.parse_args(argv)
