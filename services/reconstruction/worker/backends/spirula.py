@@ -90,6 +90,89 @@ def registered_count(images_bin: str) -> int:
         return -1
 
 
+def component_frames(workspace: str) -> dict[int, list[int]]:
+    """Registered B-frame numbers per sparse model. {} when unparseable."""
+    import glob as _glob
+    import re as _re
+    import struct as _struct
+    out: dict[int, list[int]] = {}
+    for d in sorted(_glob.glob(os.path.join(workspace, "sparse", "*"))):
+        try:
+            idx = int(os.path.basename(d))
+        except ValueError:
+            continue
+        p = os.path.join(d, "images.bin")
+        if not os.path.exists(p):
+            continue
+        try:
+            data = open(p, "rb").read()
+            off = 8
+            n = struct.unpack("<Q", data[:8])[0]
+            frames: list[int] = []
+            for _ in range(n):
+                off += 4 + 32 + 24 + 4
+                s = b""
+                while data[off:off + 1] != b"\x00":
+                    s += data[off:off + 1]
+                    off += 1
+                off += 1
+                m = _re.match(rb"(\d+)\.jpg$", s)
+                if m:
+                    frames.append(int(m.group(1)))
+                npts = struct.unpack("<Q", data[off:off + 8])[0]
+                off += 8 + npts * 24
+            out[idx] = sorted(frames)
+        except (OSError, struct.error, IndexError):
+            continue
+    return out
+
+
+def ranges_of(nums: list[int]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    s = p = -1
+    for v in sorted(nums):
+        if v != p + 1:
+            if s >= 0:
+                out.append((s, p))
+            s = v
+        p = v
+    if s >= 0:
+        out.append((s, p))
+    return out
+
+
+def coverage_report(workspace: str, total_frames: int, fps: float = 2.0) -> str:
+    """Human-readable coverage diagnosis from sparse models (for re-record guidance)."""
+    comps = component_frames(workspace)
+    if not comps:
+        return "SfM registered no frames. The footage likely has no overlapping views."
+    covered = sorted({f for fs in comps.values() for f in fs})
+    gaps = [f for f in range(1, total_frames + 1) if f not in set(covered)]
+    def fmt(rs: list[tuple[int, int]]) -> str:
+        return ", ".join(f"{a / fps:.0f}-{b / fps:.0f}s" for a, b in rs) or "none"
+    best = max(comps.items(), key=lambda kv: len(kv[1]))
+    lines = [
+        f"SfM connected {len(best[1])}/{total_frames} frames in the largest model ({len(comps)} components).",
+        f"Registered stretches: {fmt(ranges_of(covered))}.",
+        f"Missing stretches to re-record: {fmt(ranges_of(gaps))}.",
+    ]
+    return " ".join(lines)
+
+
+def registered_count(images_bin: str) -> int:
+    """Images registered in a COLMAP sparse model. First uint64 of images.bin.
+    Returns -1 when the file cannot be parsed (unknown, never guessed)."""
+    try:
+        with open(images_bin, "rb") as f:
+            raw = f.read(8)
+        if len(raw) < 8:
+            return -1
+        (n,) = struct.unpack("<Q", raw)
+        return int(n) if 0 <= n < 1000000 else -1
+    except OSError:
+        return -1
+
+
 def _train_and_watch(binpath: str, workspace: str, iterations: int,
                      workdir: str, timeout: int) -> str:
     """Train to completion, then STOP the process.
@@ -143,7 +226,8 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
                     pass
 
 
-def finalize_job(job_id: str, workdir: str) -> dict[str, Any]:
+def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
+                 partial: bool = False) -> dict[str, Any]:
     """Verify the training artifact and mark the job ready.
 
     Shared by run() and by the operator for jobs whose trainer finished but
@@ -164,7 +248,8 @@ def finalize_job(job_id: str, workdir: str) -> dict[str, Any]:
         raise SpirulaError(f"Asset is not a valid PLY splat file: {asset_path}")
     if os.path.getsize(asset_path) < 1024:
         raise SpirulaError(f"Asset suspiciously small: {asset_path}")
-    sparse = os.path.join(workdir, "workspace", "sparse", "0")
+    sparse = (os.path.join(sparse_root, "sparse", "0") if sparse_root
+              else os.path.join(workdir, "workspace", "sparse", "0"))
     images_dir = os.path.join(workdir, "workspace", "images")
     jobs = store._load("jobs.json")
     jobs[job_id]["asset"] = {
@@ -182,7 +267,9 @@ def finalize_job(job_id: str, workdir: str) -> dict[str, Any]:
         "coverageConcentratedInOneArea": None,
         "largeGapsOrUnstableRegions": None,
         "notes": [
-            "Poses from Spirula SfM (COLMAP-format sparse/0). "
+            ("PARTIAL PREVIEW: trained on the largest connected component only. "
+             if partial else "") +
+            "Poses from Spirula SfM (COLMAP-format sparse). "
             "Per-frame registration counts not yet parsed (Stage 3).",
         ],
     }
@@ -211,6 +298,7 @@ class SpirulaBackend:
         ]
         return {"workdir": workdir, "video": video,
                 "iterations": int(ctx.get("iterations", 30000)),
+                "allowPartial": bool(ctx.get("allowPartial", False)),
                 "sfmArgs": list(sfm_args)}
 
     def status(self, handle: dict[str, Any]):
@@ -244,9 +332,21 @@ class SpirulaBackend:
                     "need overlapping views of a real scene (see docs/capture-protocol.md)."
                 )
             store.transition(job_id, "estimating_camera_poses", progress=30)
-            _run([binpath, "sfm", "auto", images, "-o", workspace,
-                  *handle["sfmArgs"]], SFM_TIMEOUT,
-                 os.path.join(workdir, "sfm.log"))
+            try:
+                _run([binpath, "sfm", "auto", images, "-o", workspace,
+                      *handle["sfmArgs"]], SFM_TIMEOUT,
+                     os.path.join(workdir, "sfm.log"))
+            except SpirulaError as e:
+                if "exit 3" not in str(e):
+                    raise
+                # Exit 3 = PARTIAL: SfM mapped what it could. Diagnose coverage
+                # precisely instead of dumping raw log tail.
+                raise SpirulaError(
+                    "COVERAGE_GAP: " + coverage_report(workspace, frames_b["count"])
+                    + " Re-record the missing stretches (docs/capture-protocol.md), "
+                    "or re-run with --allow-partial for a labeled partial preview."
+                ) from e
+            train_workspace = workspace
             sparse = os.path.join(workspace, "sparse", "0")
             if not (os.path.isdir(sparse) and os.listdir(sparse)):
                 raise SpirulaError(
@@ -260,16 +360,29 @@ class SpirulaBackend:
             reg = registered_count(os.path.join(sparse, "images.bin"))
             floor = max(8, frames_b["count"] // 2)
             if reg >= 0 and reg < floor:
-                raise SpirulaError(
-                    f"COVERAGE_GAP: SfM registered only {reg}/{frames_b['count']} frames "
-                    f"in the primary model (need {floor}). Likely causes: dark or blank "
-                    "stretches, too-fast motion, or weak overlap. See the contact sheet "
-                    "and docs/capture-protocol.md, then re-record the weak sections."
-                )
+                if not handle.get("allowPartial"):
+                    raise SpirulaError(
+                        "COVERAGE_GAP: " + coverage_report(workspace, frames_b["count"])
+                        + " Re-record the missing stretches (docs/capture-protocol.md), "
+                        "or re-run with --allow-partial for a labeled partial preview."
+                    )
+                # Opt-in partial: train the largest component, honestly labeled.
+                comps = component_frames(workspace)
+                best_idx = max(comps.items(), key=lambda kv: len(kv[1]))[0]
+                partial = os.path.join(workdir, "partial")
+                os.makedirs(os.path.join(partial, "images"), exist_ok=True)
+                for f in os.listdir(images):
+                    src, dst = os.path.join(images, f), os.path.join(partial, "images", f)
+                    if not os.path.exists(dst):
+                        os.symlink(src, dst)
+                shutil.copytree(os.path.join(workspace, "sparse", str(best_idx)),
+                                  os.path.join(partial, "sparse", "0"))
+                train_workspace = partial
             store.transition(job_id, "reconstructing", progress=50)
-            _train_and_watch(binpath, workspace, handle["iterations"],
+            _train_and_watch(binpath, train_workspace, handle["iterations"],
                              workdir, TRAIN_TIMEOUT)
-            return finalize_job(job_id, workdir)
+            return finalize_job(job_id, workdir, train_workspace if train_workspace != workspace else None,
+                                partial=train_workspace != workspace)
         except (SpirulaError, media.MediaError, OSError) as e:
             msg = str(e)[:500]
             code = "SPIRULA_FAILED"

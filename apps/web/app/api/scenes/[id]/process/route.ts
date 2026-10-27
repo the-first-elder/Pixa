@@ -25,11 +25,13 @@ export async function POST(
   let backend = 'local';
   let asset: string | undefined;
   let poses: string | undefined;
+  let allowPartial = false;
   try {
     const body = await req.json();
     if (typeof body?.backend === 'string') backend = body.backend;
     if (typeof body?.asset === 'string') asset = body.asset;
     if (typeof body?.poses === 'string') poses = body.poses;
+    if (body?.allowPartial === true) allowPartial = true;
   } catch {
     // Defaults stand.
   }
@@ -41,6 +43,7 @@ export async function POST(
   const args = ['run-job', job.id, '--video', video, '--backend', backend];
   if (asset) args.push('--asset', asset);
   if (poses) args.push('--poses', poses);
+  if (allowPartial) args.push('--allow-partial');
   spawnWorker(args);
   return NextResponse.json({ jobId: job.id, status: 'queued' }, { status: 202 });
 }

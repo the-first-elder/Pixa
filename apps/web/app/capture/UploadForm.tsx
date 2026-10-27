@@ -14,6 +14,7 @@ export default function UploadForm() {
   const [name, setName] = useState('');
   const [phase, setPhase] = useState<'idle' | 'creating' | 'uploading' | 'starting' | 'error'>('idle');
   const [backend, setBackend] = useState('spirula');
+  const [allowPartial, setAllowPartial] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,7 +66,7 @@ export default function UploadForm() {
       const procRes = await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend }),
+        body: JSON.stringify({ backend, allowPartial }),
       });
       if (!procRes.ok) {
         const body = (await procRes.json().catch(() => null)) as { error?: string } | null;
@@ -120,6 +121,17 @@ export default function UploadForm() {
           <option value="kiri">KIRI hosted API — spends credits (needs key)</option>
           <option value="runpod">RunPod cloud GPU — needs pod + asset</option>
         </select>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id="allow-partial"
+          type="checkbox"
+          checked={allowPartial}
+          onChange={(e) => setAllowPartial(e.target.checked)}
+        />
+        <label htmlFor="allow-partial" className="text-sm text-neutral-400">
+          Train a labeled partial preview if coverage is incomplete
+        </label>
       </div>
       {phase !== 'idle' && phase !== 'error' && (
         <p className="text-sm text-neutral-500">
