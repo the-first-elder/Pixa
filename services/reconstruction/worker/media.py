@@ -87,12 +87,15 @@ def estimate_frames(duration: float) -> dict[str, Any]:
 def extract_frames(video: str, out_dir: str, pipeline: str) -> dict[str, Any]:
     """Extract frames with ffmpeg. Returns a manifest of what was written."""
     if pipeline == "A":
-        vf = "fps=1,scale=1280:-1"
-        cap_note = "analysis frames (1 fps, capped at 120)"
+        vf = "fps=1,scale=w='if(gt(iw,1280),1280,iw)':h='-2'"
+        cap_note = "analysis frames (1 fps, width ≤1280, never upscaled, capped at 120)"
     elif pipeline == "B":
-        # Overlap-preserving: 2 fps, cap width 1600. Never sparse-sampled.
-        vf = "fps=2,scale=1600:-2"
-        cap_note = "reconstruction frames (2 fps, width ≤1600)"
+        # Overlap-preserving: 2 fps. Downscale-only cap at 1600px wide —
+        # NEVER upscale: interpolated pixels add zero detail while slowing
+        # SfM/training and bloating storage (verified: 478p source was being
+        # upscaled 3.3x to 1600px wide with no new information).
+        vf = "fps=2,scale=w='if(gt(iw,1600),1600,iw)':h='-2'"
+        cap_note = "reconstruction frames (2 fps, width ≤1600, never upscaled)"
     else:
         raise MediaError("pipeline must be 'A' or 'B'")
     os.makedirs(out_dir, exist_ok=True)
