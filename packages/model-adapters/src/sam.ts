@@ -7,7 +7,7 @@
  * NOTE: request/response shapes follow https://dev.meta.ai/docs/media-segmentation
  * and will be re-verified live with a billed test call before Stage 3 use.
  */
-import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config.js';
+import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config';
 
 export interface SamBox {
   xMin: number;

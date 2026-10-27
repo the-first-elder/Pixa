@@ -7,7 +7,7 @@
  * no confidence). There is NO Meta TTS — spoken output uses browser speech
  * synthesis (Stage 6).
  */
-import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config.js';
+import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config';
 
 export interface TranscribeTurn {
   turnId: string;

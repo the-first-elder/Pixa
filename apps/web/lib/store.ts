@@ -150,3 +150,87 @@ export function latestJobForScene(sceneId: string): ProcessingJob | null {
     .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
   return jobs[0] ?? null;
 }
+
+// ---------------------------------------------------------------------------
+// Conversation sessions + scene actions (PRD §§ 22, 24 — what the AI
+// requested vs. what actually executed).
+// ---------------------------------------------------------------------------
+
+export interface HistoryItem {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ConversationSession {
+  id: string;
+  sceneId: string;
+  createdAt: string;
+  lastActiveAt: string;
+  history: HistoryItem[];
+}
+
+export interface SceneAction {
+  id: string;
+  sessionId: string;
+  actionType: string;
+  targetEntityId: string | null;
+  arguments: Record<string, unknown>;
+  status: string;
+  executionResult: Record<string, unknown> | null;
+  executed: boolean;
+  createdAt: string;
+}
+
+export function getOrCreateSession(sceneId: string, sessionId?: string): ConversationSession {
+  const sessions = load<ConversationSession>('sessions.json');
+  if (sessionId && sessions[sessionId] && sessions[sessionId].sceneId === sceneId) {
+    return sessions[sessionId];
+  }
+  const session: ConversationSession = {
+    id: newId('session'),
+    sceneId,
+    createdAt: now(),
+    lastActiveAt: now(),
+    history: [],
+  };
+  sessions[session.id] = session;
+  save('sessions.json', sessions);
+  return session;
+}
+
+export function appendHistory(sessionId: string, items: HistoryItem[]): void {
+  const sessions = load<ConversationSession>('sessions.json');
+  const session = sessions[sessionId];
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  session.history = [...session.history, ...items].slice(-40);
+  session.lastActiveAt = now();
+  sessions[sessionId] = session;
+  save('sessions.json', sessions);
+}
+
+export function recordAction(action: Omit<SceneAction, 'id' | 'createdAt'>): SceneAction {
+  const actions = load<SceneAction>('actions.json');
+  const full: SceneAction = { ...action, id: newId('action'), createdAt: now() };
+  actions[full.id] = full;
+  save('actions.json', actions);
+  return full;
+}
+
+export function confirmAction(
+  id: string,
+  patch: { executed: boolean; status: string; executionResult: Record<string, unknown> },
+): SceneAction | null {
+  const actions = load<SceneAction>('actions.json');
+  const action = actions[id];
+  if (!action) return null;
+  const updated = { ...action, ...patch };
+  actions[id] = updated;
+  save('actions.json', actions);
+  return updated;
+}
+
+export function actionsForSession(sessionId: string): SceneAction[] {
+  return Object.values(load<SceneAction>('actions.json'))
+    .filter((a) => a.sessionId === sessionId)
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+}

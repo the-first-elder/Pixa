@@ -3,7 +3,7 @@
  * Generated images are labeled as generated and NEVER replace the
  * reconstruction as evidence. Not a core dependency of reconstruction.
  */
-import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config.js';
+import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config';
 
 export interface GenerateImageOptions {
   prompt: string;

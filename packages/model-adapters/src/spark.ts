@@ -4,7 +4,7 @@
  * Security: request-only. The model NEVER gets DB/filesystem/renderer access;
  * it returns tool calls; the app validates and executes (Stage 5).
  */
-import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config.js';
+import { loadConfig, metaFetch, throwIfError, type AdapterConfig } from './config';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
