@@ -43,6 +43,7 @@ export async function POST(
         ...(a.entityIds ? { entityIds: a.entityIds } : {}),
         ...(a.positions ? { positions: a.positions } : {}),
         ...(a.stops ? { stops: a.stops } : {}),
+        ...(a.result ? { result: a.result } : {}),
         ...(a.camera ? { camera: a.camera } : {}),
         ...(a.evidence ? { evidence: a.evidence } : {}),
         ...(a.message ? { message: a.message } : {}),

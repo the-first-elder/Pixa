@@ -158,6 +158,8 @@ export const TOOL_NAMES = [
   'showRoute',
   'inspectLocation',
   'compareLocations',
+  'measureObject',
+  'calibrateScale',
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 

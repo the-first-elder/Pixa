@@ -15,6 +15,7 @@ interface Action {
   stops?: CameraCommand[];
   camera?: CameraCommand;
   evidence?: unknown;
+  result?: { meters?: number | null; units?: number; uncertaintyPct?: number; calibrated?: boolean; label?: string; dimension?: string } | null;
 }
 
 interface Message {
@@ -139,6 +140,9 @@ export default function AssistantPanel({
                     <p className="text-xs text-neutral-500">
                       {a.type}: {a.status}
                       {a.message ? ` — ${a.message}` : ''}
+                      {a.result && typeof a.result.meters === 'number'
+                        ? ` — ${a.result.meters.toFixed(2)} m ±${a.result.uncertaintyPct ?? '?'}%`
+                        : null}
                     </p>
                     {Array.isArray((a.evidence as { frames?: unknown } | null | undefined)?.frames) && (
                       <div className="mt-1 flex flex-wrap gap-1">

@@ -18,6 +18,7 @@ import {
 } from './store';
 import { getSceneIndex, relatedEntities } from './scene-index';
 import { TOOL_DEFS, describeRelated, validateToolCall } from './tools';
+import { calibrateSceneScale, measureLabel } from './scale';
 
 const SYSTEM_PROMPT = `You are the WorldLens scene assistant. You control a reconstructed 3D environment through tools — you never manipulate the renderer directly.
 
@@ -39,6 +40,7 @@ export interface DispatchedAction extends ActionResult {
   stops?: { type: 'tween'; position: [number, number, number]; target: [number, number, number]; durationMs: number }[];
   positions?: [number, number, number][];
   evidence?: unknown;
+  result?: unknown;
 }
 
 export interface QueryOutcome {
@@ -125,27 +127,54 @@ export async function runQuery(
     } catch {
       // parsedArgs stays {}; validation already reports invalid_args.
     }
+    // Server-side measurement execution (needs filesystem + geometry).
+    let execResult: Record<string, unknown> | null = null;
+    let execMessage: string | undefined;
+    let execStatus: ActionResult['status'] = validation.status === 'success' || validation.status === 'not_found' || validation.status === 'invalid_args' || validation.status === 'unsupported'
+      ? validation.status
+      : 'execution_failed';
+    if (validation.status === 'success' && (name === 'measureObject' || name === 'calibrateScale')) {
+      try {
+        if (name === 'measureObject') {
+          const dim = parsedArgs.dimension === 'width' ? 'width' : 'height';
+          const m = measureLabel(sceneId, String(parsedArgs.label ?? ''), dim as 'height' | 'width');
+          execResult = { ...(m as unknown as Record<string, unknown>) };
+          execMessage = m.calibrated && m.meters !== null
+            ? `${m.label} ${m.dimension}: ${m.meters.toFixed(2)} m ±${m.uncertaintyPct}% (frames ${m.frames.join(',') || 'n/a'})`
+            : `${m.label} ${m.dimension}: ${m.units.toFixed(2)} reconstruction units (UNCALIBRATED — not meters). Give me one real measurement (e.g. "the door is 2.1 meters tall") to calibrate.`;
+        } else {
+          const dim = parsedArgs.dimension === 'width' ? 'width' : 'height';
+          const s = calibrateSceneScale(sceneId, String(parsedArgs.referenceLabel ?? ''), dim as 'height' | 'width', Number(parsedArgs.knownMeters));
+          execResult = { ...(s as unknown as Record<string, unknown>) };
+          execMessage = `Scale calibrated: 1 m = ${s.scale.toFixed(3)} units (±${s.uncertaintyPct}%), from ${s.referenceLabel} ${s.dimension} = ${s.knownMeters} m.`;
+        }
+      } catch (e) {
+        execStatus = 'execution_failed';
+        execMessage = e instanceof Error ? e.message.slice(0, 200) : 'Measurement failed';
+      }
+    }
     const action = recordAction({
       sessionId: session.id,
       actionType: name,
       targetEntityId: validation.targetId,
       arguments: parsedArgs,
-      status: validation.status,
-      executionResult: null,
+      status: execStatus,
+      executionResult: execResult,
       executed: false,
     });
     dispatched.push({
       action: name as DispatchedAction['action'],
-      status: validation.status,
+      status: execStatus,
       targetId: validation.targetId,
       executed: false,
-      message: 'message' in validation ? validation.message : undefined,
+      message: execMessage ?? ('message' in validation ? validation.message : undefined),
       actionId: action.id,
       camera: 'camera' in validation ? validation.camera : undefined,
       stops: 'stops' in validation ? validation.stops : undefined,
       positions: 'positions' in validation ? validation.positions : undefined,
       entityIds: 'entityIds' in validation ? validation.entityIds : undefined,
       evidence: 'evidence' in validation ? validation.evidence : undefined,
+      result: execResult ?? undefined,
     });
     // Follow-up context ("it", "there") resolves to the last selected entity.
     if (validation.status === 'success' && validation.targetId) {

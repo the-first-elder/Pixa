@@ -16,6 +16,43 @@ export const TOOL_DEFS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'measureObject',
+      description:
+        'Measure an indexed object (or "__room" for the room-contents extent) along a dimension. ' +
+        'Returns meters ONLY if the scene is scale-calibrated; otherwise reconstruction units with an uncalibrated warning. ' +
+        'Use for "how tall/wide/big", "what size", and as input to fit questions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Object label, or "__room" for room-contents extent.' },
+          dimension: { type: 'string', description: '"height" or "width" (default "height").' },
+        },
+        required: ['label'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calibrateScale',
+      description:
+        'Calibrate reconstruction units to meters from a user-provided reference measurement, e.g. the user says the door is 2.1 meters tall. ' +
+        'Call ONLY with an explicit user-stated real-world size — never guess one. This is the only path to meter answers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          referenceLabel: { type: 'string', description: 'Indexed object label, e.g. "door".' },
+          dimension: { type: 'string', description: '"height" or "width".' },
+          knownMeters: { type: 'number', description: 'User-stated real-world size in meters.' },
+        },
+        required: ['referenceLabel', 'dimension', 'knownMeters'],
+        additionalProperties: false,
+      },
+    },
+  },  {
+    type: 'function',
+    function: {
       name: 'navigateToLocation',
       description:
         'Move the camera to a known location or supported viewpoint in the active scene. ' +
@@ -258,6 +295,39 @@ export function validateToolCall(
         message: `"${ent.label}" (${ent.type}) is observed in frames ${ent.evidence.frames.join(', ') || 'none recorded'}.` +
           (ent.position ? '' : ' Its 3D position is not registered.'),
       };
+    }
+    case 'measureObject': {
+      const q = str(args.label);
+      if (!q) return { status: 'invalid_args', targetId: null, message: 'Missing "label".' };
+      const dim = str(args.dimension) || 'height';
+      if (dim !== 'height' && dim !== 'width') {
+        return { status: 'invalid_args', targetId: null, message: 'dimension must be "height" or "width".' };
+      }
+      if (q === '__room') {
+        return { status: 'success', targetId: 'room', message: 'Room-contents extent measurement.' };
+      }
+      const matches = findByLabel(index, q);
+      if (matches.length === 0) {
+        return { status: 'not_found', targetId: null, message: `No "${q}" identified in this scene.` };
+      }
+      return { status: 'success', targetId: matches[0].id, message: `Measuring ${matches[0].label}.` };
+    }
+    case 'calibrateScale': {
+      const q = str(args.referenceLabel);
+      const dim = str(args.dimension);
+      const meters = Number(args.knownMeters);
+      if (!q) return { status: 'invalid_args', targetId: null, message: 'Missing "referenceLabel".' };
+      if (dim !== 'height' && dim !== 'width') {
+        return { status: 'invalid_args', targetId: null, message: 'dimension must be "height" or "width".' };
+      }
+      if (!Number.isFinite(meters) || meters <= 0 || meters > 100) {
+        return { status: 'invalid_args', targetId: null, message: 'knownMeters must be a positive real-world size.' };
+      }
+      const matches = findByLabel(index, q);
+      if (matches.length === 0) {
+        return { status: 'not_found', targetId: null, message: `No "${q}" identified — cannot calibrate from it.` };
+      }
+      return { status: 'success', targetId: matches[0].id, message: `Calibrating from ${matches[0].label}.` };
     }
     case 'compareLocations': {
       const a = findByLabel(index, str(args.first));

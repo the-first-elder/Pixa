@@ -13,6 +13,7 @@ export default function UploadForm() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
   const [phase, setPhase] = useState<'idle' | 'creating' | 'uploading' | 'starting' | 'error'>('idle');
+  const [backend, setBackend] = useState('spirula');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +65,7 @@ export default function UploadForm() {
       const procRes = await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend: 'local' }),
+        body: JSON.stringify({ backend }),
       });
       if (!procRes.ok) {
         const body = (await procRes.json().catch(() => null)) as { error?: string } | null;
@@ -106,6 +107,20 @@ export default function UploadForm() {
           <div className="h-full bg-white transition-all" style={{ width: `${progress}%` }} />
         </div>
       )}
+      <div>
+        <label htmlFor="backend" className="text-sm text-neutral-400">Reconstruction backend</label>
+        <select
+          id="backend"
+          value={backend}
+          onChange={(e) => setBackend(e.target.value)}
+          className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+        >
+          <option value="spirula">Spirula — free, on this machine (recommended)</option>
+          <option value="local">Local FFmpeg+COLMAP — needs colmap binary</option>
+          <option value="kiri">KIRI hosted API — spends credits (needs key)</option>
+          <option value="runpod">RunPod cloud GPU — needs pod + asset</option>
+        </select>
+      </div>
       {phase !== 'idle' && phase !== 'error' && (
         <p className="text-sm text-neutral-500">
           {phase === 'creating' && 'Creating scene…'}

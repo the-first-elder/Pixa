@@ -208,6 +208,36 @@ export interface SceneAction {
   createdAt: string;
 }
 
+export interface SceneScale {
+  sceneId: string;
+  scale: number; // reconstruction units per meter
+  referenceLabel: string;
+  dimension: 'height' | 'width';
+  knownMeters: number;
+  measuredUnits: number;
+  uncertaintyPct: number;
+  method: string;
+  createdAt: string;
+}
+
+export function getScale(sceneId: string): SceneScale | null {
+  return load<SceneScale>('scales.json')[sceneId] ?? null;
+}
+
+export function setScale(scale: Omit<SceneScale, 'createdAt'>): SceneScale {
+  const scales = load<SceneScale>('scales.json');
+  const full: SceneScale = { ...scale, createdAt: now() };
+  scales[scale.sceneId] = full;
+  save('scales.json', scales);
+  return full;
+}
+
+export function deleteScale(sceneId: string): void {
+  const scales = load<SceneScale>('scales.json');
+  delete scales[sceneId];
+  save('scales.json', scales);
+}
+
 export function getOrCreateSession(sceneId: string, sessionId?: string): ConversationSession {
   const sessions = load<ConversationSession>('sessions.json');
   if (sessionId && sessions[sessionId] && sessions[sessionId].sceneId === sceneId) {
