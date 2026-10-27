@@ -63,6 +63,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
   const modeRef = useRef<ViewerMode>('orbit');
   const setModeRef = useRef<(m: ViewerMode) => void>(() => {});
   const meshReadyRef = useRef<(ready: boolean) => void>(() => {});
+  const snapRef = useRef<() => void>(() => {});
 
   useImperativeHandle(ref, () => ({
     flyTo: (cmd: CameraCommand) => flyRef.current(cmd),
@@ -134,6 +135,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         }
         setModeRef.current = (m: ViewerMode) => {
           if (m === 'rooms' && colliders.length === 0) return; // no proxy, no rooms
+          if (m === 'rooms' && modeRef.current !== 'rooms') snapRef.current();
           modeRef.current = m;
           setModeState(m);
           controls.enabled = m === 'orbit';
@@ -335,6 +337,23 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
         const flatDir = new THREE.Vector3();
         const raycaster = new THREE.Raycaster();
         const downDir = new THREE.Vector3(0, -1, 0);
+        const snapEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+        // Entering rooms mode drops you into a body: floor-snap to eye
+        // height and level the view to horizontal, so it reads as standing
+        // in the room rather than flying above it.
+        snapRef.current = () => {
+          if (colliders.length === 0) return;
+          raycaster.set(camera.position, downDir);
+          raycaster.far = Math.max(3, boundRadius);
+          const hits = raycaster.intersectObjects(colliders, false);
+          if (hits.length > 0) {
+            camera.position.y = hits[0].point.y + eyeOffsetRef.current;
+          }
+          snapEuler.setFromQuaternion(camera.quaternion);
+          snapEuler.x = 0;
+          snapEuler.z = 0;
+          camera.quaternion.setFromEuler(snapEuler);
+        };
         const tryStep = (step: THREE.Vector3): boolean => {
           // Slide along walls: full step, else x-only, else z-only, else stop.
           raycaster.set(camera.position, step.clone().normalize());
