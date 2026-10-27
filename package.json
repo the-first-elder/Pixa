@@ -1,0 +1,18 @@
+{
+  "name": "worldlens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WorldLens — AI-powered spatial computing: phone video to explorable 3D environments",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/web",
+    "build": "npm run build --workspace apps/web",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
