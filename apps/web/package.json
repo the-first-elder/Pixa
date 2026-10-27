@@ -1,0 +1,31 @@
+{
+  "name": "apps-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sparkjsdev/spark": "latest",
+    "@worldlens/model-adapters": "0.1.0",
+    "@worldlens/scene-schema": "0.1.0",
+    "@worldlens/shared-types": "0.1.0",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "server-only": "latest",
+    "three": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/three": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest"
+  }
+}

@@ -1,0 +1,2 @@
+# Scene-index service (Python side). Stage 3 implements these modules.
+# The web app consumes the index via apps/web/lib/scene-index (Stage 3).

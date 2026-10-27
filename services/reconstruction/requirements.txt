@@ -1,0 +1,2 @@
+# WorldLens reconstruction worker — stdlib only (ffmpeg/ffprobe binaries required).
+# Heavy GPU training never runs here; it runs in pluggable backends (KIRI API, RunPod pod).

@@ -32,8 +32,21 @@
 - Files: `POST /v1/files` (`purpose:user_data`); team storage 100 GiB, no expiry by default — set `expires_after` or delete. Uploaded capture frames sent to Meta must be pruned.
 - Rate limits per team: Spark/Wonder/SAM 3,000 RPM / 4,000,000 TPM; Contributor Spark 150 RPM; Image 150 RPM; Voice 256 concurrent streams. Handle 429 + `Retry-After`.
 - SAM billing: $2.50/1k images; $0.20/1k video frames, min 50 frames/request.
+- **Verified live 2026-10-27 (synthetic 640×480 frame, prompt "red square"):**
+  SAM returns `output[0].content[0].text` lines like
+  `<0f>0<|box;x1=200;y1=140;x2=439;y2=339;w=640;h=480|><|mask;x=…;y=…;data=…|>`.
+  `parseBoxes` handles this named-param format. Prompt specificity matters:
+  "red square" matched, bare "square"/"box" did not — Stage 3 must use
+  descriptive noun phrases.
+- **Verified live: Spark reasoning consumes `max_tokens` budget**
+  (190 reasoning tokens on a 2-word reply). Always set generous `maxTokens`
+  (≥2048; ≥4000 for transcription-adjacent use).
 - Spark Standard: $1.25/M in, $4.25/M out. Contributor: $0.10/M in, $0.20/M out — **but content may be used to train future models**. Use Standard for private indoor captures.
 - Image: $0.01/image. Voice: $0.18/audio-hour.
+- **Verified live 2026-10-27:** voice transcribe accepts WAV POST and returns
+  `{sessionId, transcript, audioDurationMs, turns}` (empty transcript on a
+  non-speech tone = correct honest output); image generations returns webp
+  bytes in `data[0].b64_json` with `output_format: "webp"`.
 
 ## Data governance (applies to PRD §26)
 
