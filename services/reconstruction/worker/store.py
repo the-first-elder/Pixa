@@ -109,6 +109,11 @@ def transition(job_id: str, status: str, **fields: Any) -> dict[str, Any]:
     job.setdefault("transitions", []).append({"status": status, "at": now()})
     if status in ("ready", "failed"):
         job["completedAt"] = now()
+    else:
+        # A retry in progress supersedes the previous terminal state.
+        job["completedAt"] = None
+        job["errorCode"] = None
+        job["errorMessage"] = None
     _save("jobs.json", jobs)
     return job
 

@@ -21,6 +21,7 @@ import glob
 import os
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import time
@@ -173,6 +174,17 @@ def registered_count(images_bin: str) -> int:
         return -1
 
 
+SPIRULA_VIEWER_PORT = 7007
+
+
+def _viewer_port_busy() -> bool:
+    """Spirula train binds one fixed viewer port — concurrent trainings collide.
+    Ground truth is the port itself, so externally started trainers count too."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(2)
+        return s.connect_ex(("127.0.0.1", SPIRULA_VIEWER_PORT)) == 0
+
+
 def _train_and_watch(binpath: str, workspace: str, iterations: int,
                      workdir: str, timeout: int) -> str:
     """Train to completion, then STOP the process.
@@ -182,6 +194,12 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
     "Training complete" marker, then terminate the whole process group.
     Returns the train.log path. Raises SpirulaError on timeout/failure text.
     """
+    if _viewer_port_busy():
+        raise SpirulaError(
+            "TRAINING_BUSY: another reconstruction is already training on this "
+            "machine (Spirula uses one fixed viewer port). Wait for it to finish, "
+            "then retry this job."
+        )
     log_path = os.path.join(workdir, "train.log")
     cmd = [binpath, "train", "--data", workspace, "--data-format", "colmap",
            "--num-iterations", str(iterations),
@@ -386,7 +404,7 @@ class SpirulaBackend:
         except (SpirulaError, media.MediaError, OSError) as e:
             msg = str(e)[:500]
             code = "SPIRULA_FAILED"
-            for prefix in ("SPIRULA_", "NO_", "COVERAGE_"):
+            for prefix in ("SPIRULA_", "NO_", "COVERAGE_", "TRAINING_"):
                 if msg.startswith(prefix):
                     code = msg.split(":")[0]
                     break
