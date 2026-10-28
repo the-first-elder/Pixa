@@ -250,6 +250,7 @@ export function validateToolCall(
         targetId: registered[0].id,
         entityIds: registered.map((m) => m.id),
         positions: registered.map((m) => m.position as [number, number, number]),
+        evidence: { frames: [...new Set(registered.flatMap((m) => m.evidence.frames))].slice(0, 6) },
       };
     }
     case 'showRoute': {
