@@ -16,9 +16,10 @@ const framesDir = arg('frames');
 const maxFrames = Math.max(1, parseInt(arg('max-frames', '16')!, 10)); // detection frames
 const maxLabels = Math.max(1, parseInt(arg('max-labels', '16')!, 10)); // distinct categories
 const probeCount = Math.max(1, parseInt(arg('probe-frames', '8')!, 10)); // label-discovery frames
+const extraPrompts = (arg('extra-prompts', '') || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const confirmed = process.argv.includes('--yes');
 if (!sceneId || !framesDir) {
-  console.error('Usage: index-scene.mts --scene <id> --frames <dir> [--max-frames 16] [--max-labels 16] [--probe-frames 8] [--yes]');
+  console.error('Usage: index-scene.mts --scene <id> --frames <dir> [--max-frames 16] [--max-labels 16] [--probe-frames 8] [--extra-prompts tv,remote] [--yes]');
   process.exit(2);
 }
 
@@ -78,7 +79,7 @@ for (const f of probeFrames) {
   }
 }
 const canon = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-const labels = [...new Set([...seen].map(canon))].filter(Boolean).slice(0, maxLabels);
+const labels = [...new Set([...seen].map(canon).concat(extraPrompts))].filter(Boolean).slice(0, Math.max(maxLabels, extraPrompts.length));
 console.log(`labels: ${labels.join(', ') || '(none)'}`);
 if (labels.length === 0) {
   console.log('No labels found; writing empty index.');

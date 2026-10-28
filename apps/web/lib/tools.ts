@@ -12,6 +12,7 @@ import {
   relatedEntities,
   type SceneIndex,
 } from './scene-index';
+import { measureLabel } from './scale';
 
 export const TOOL_DEFS: ToolDefinition[] = [
   {
@@ -245,11 +246,41 @@ export function validateToolCall(
           evidence: { frames },
         };
       }
+      // Registered: markers at true positions. focusOnObject additionally gets
+      // a size-framed close-up (measured extents -> distance), so "show me the
+      // TV" lands on a focused view instead of a wide shot.
+      let focusCamera: CameraCommand | undefined;
+      if (tool === 'focusOnObject') {
+        try {
+          const h = measureLabel(sceneId, registered[0].label, 'height');
+          const w = measureLabel(sceneId, registered[0].label, 'width');
+          const size = Math.max(h.units, w.units);
+          if (size > 1e-6) {
+            const p = registered[0].position as [number, number, number];
+            const distance = Math.min(4, Math.max(0.35, (size / 2 / Math.tan(36 * Math.PI / 180)) * 1.7));
+            const dir: [number, number, number] = [0.55, 0.38, 0.55];
+            const len = Math.hypot(dir[0], dir[1], dir[2]);
+            focusCamera = {
+              type: 'tween',
+              position: [
+                p[0] + (dir[0] / len) * distance,
+                p[1] + (dir[1] / len) * distance,
+                p[2] + (dir[2] / len) * distance,
+              ],
+              target: p,
+              durationMs: 1600,
+            };
+          }
+        } catch {
+          // Measurement failed: markers still highlight; no close-up. Never fail the query.
+        }
+      }
       return {
         status: 'success',
         targetId: registered[0].id,
         entityIds: registered.map((m) => m.id),
         positions: registered.map((m) => m.position as [number, number, number]),
+        ...(focusCamera ? { camera: focusCamera } : {}),
         evidence: { frames: [...new Set(registered.flatMap((m) => m.evidence.frames))].slice(0, 6) },
       };
     }
