@@ -341,11 +341,22 @@ def cmd_process_segment(args: argparse.Namespace) -> int:
 
 def cmd_recover(_args: argparse.Namespace) -> int:
     """Mark non-terminal jobs failed/INTERRUPTED (process died mid-run).
-    Never claims resume — operator retries explicitly via run-job/process."""
+    Also terminates orphaned trainer processes (by recorded pgid/pid) so the
+    trainer slot frees up. Never claims resume — retry explicitly."""
+    import signal as _signal
     jobs = store._load("jobs.json")
     marked = []
     for jid, job in jobs.items():
         if job["status"] not in ("ready", "failed"):
+            pgid = job.get("trainPgid") or job.get("trainPid")
+            if pgid is not None:
+                try:
+                    os.killpg(int(pgid), _signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        os.kill(int(pgid), _signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
             job["status"] = "failed"
             job["errorCode"] = "INTERRUPTED"
             job["errorMessage"] = ("Process ended while this job was active. "
