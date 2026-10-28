@@ -1,0 +1,83 @@
+# Pixa CI — runs on every push and pull request.
+#
+# What runs here (all free, offline, no GPU, no billing):
+# - typecheck: tsc across all workspaces
+# - worker-smoke: python compile + imports + CLI parse of the reconstruction worker
+# - notifications: offline unit tests against an isolated STORAGE_DIR
+# - auth: HTTP auth matrix against a throwaway prod server with dummy creds
+#   (self-seeding fixtures; never touches real data; 401s fire before AI work)
+#
+# What does NOT run here (needs this Mac's GPU, real footage, or billed APIs):
+# - scripts/test-longvideo.sh (trainer/GPU + large fixtures)
+# - scripts/index-scene.mts / track-scene.mts / register-entities.mts (Meta API spend)
+# - browser-verified visual checks (screenshots are taken locally pre-commit)
+# Run those manually before release; see docs/long-video-report.md.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspaces --if-present
+
+  worker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile + import worker
+        run: |
+          cd services/reconstruction
+          python3 -m py_compile worker/__main__.py worker/media.py worker/store.py worker/analysis.py worker/backends/spirula.py worker/backends/kiri.py worker/backends/runpod.py worker/backends/local.py
+          python3 -m worker --help > /dev/null
+          echo "worker smoke OK"
+
+  notifications:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: STORAGE_DIR=/tmp/wl-ntest npx tsx scripts/test-notifications.mts
+
+  auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace apps/web
+      - name: Start throwaway server with dummy creds
+        run: |
+          STORAGE_DIR=/tmp/wl-authtest \
+          AUTH_SECRET=dummy-secret-for-ci-only \
+          GOOGLE_CLIENT_ID=dummy-ci-id \
+          GOOGLE_CLIENT_SECRET=dummy-ci-secret \
+          nohup npx next start --port 3000 > /tmp/pixa-ci.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/api/me > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:3000/api/me
+        working-directory: apps/web
+      - name: Run auth matrix
+        run: STORE=/tmp/wl-authtest BASE=http://localhost:3000 bash scripts/test-auth.sh
