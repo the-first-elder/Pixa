@@ -8,6 +8,7 @@ import { buildReport, type CaptureReport, type MetricSample, type WeakMoment } f
 import { CompassDial, useCoverageCompass, useDeviceTilt } from './CoverageCompass';
 import CaptureReportView from './CaptureReportView';
 import DirectorOverlay from './DirectorOverlay';
+import SignInModal from './SignInModal';
 
 type Phase = 'idle' | 'preview' | 'recording' | 'review' | 'uploading' | 'error';
 
@@ -36,6 +37,7 @@ export default function CaptureRecorder() {
   const [pass, setPass] = useState(1);
   const [scout, setScout] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
   const [report, setReport] = useState<CaptureReport | null>(null);
   const [resolution, setResolution] = useState<{ w: number; h: number } | null>(null);
   const blobRef = useRef<Blob | null>(null);
@@ -448,7 +450,7 @@ export default function CaptureRecorder() {
           setError('Please sign in, then select your video again.');
           return;
         }
-        router.push('/signin?callbackUrl=/capture');
+        setSignInOpen(true);
         return;
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
@@ -682,6 +684,7 @@ export default function CaptureRecorder() {
       )}
       {phase === 'uploading' && <p className="mt-3 text-sm text-neutral-500">Uploading…</p>}
       {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} callbackUrl="/capture" />
       {(phase === 'error' || phase === 'review') && !blobUrl && phase === 'error' && (
         <button
           type="button"

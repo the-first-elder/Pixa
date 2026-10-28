@@ -1,0 +1,13 @@
+# Edge entry for Pixa: https://pixa.<account>.workers.dev -> Mac server.
+# Deployed by CI on push (see .github/workflows/ci.yml).
+#
+# ORIGIN must be a STABLE tunnel URL. Quick tunnels (trycloudflare.com)
+# rotate on every restart and will 502 the site — use the named tunnel's
+# <tunnel-id>.cfargotunnel.com address. Update this when the tunnel changes.
+name = "pixa"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+workers_dev = true
+
+[vars]
+ORIGIN = "https://civic-rob-intranet-tomorrow.trycloudflare.com"

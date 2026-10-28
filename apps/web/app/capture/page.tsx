@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import AuthNav from '@/components/AuthNav';
 import CaptureRecorder from '@/components/CaptureRecorder';
+import SignInButton from '@/components/SignInButton';
 import { authEnabled, sessionUser } from '@/lib/authz';
 import UploadForm from './UploadForm';
 
@@ -27,12 +28,11 @@ export default async function CapturePage() {
             You can record and pick a video first — but creating the scene
             needs an account so progress and results are saved to you.
           </p>
-          <Link
-            href="/signin?callbackUrl=/capture"
+          <SignInButton
+            callbackUrl="/capture"
+            label="Continue with Google"
             className="mt-3 inline-block rounded-md bg-white px-4 py-2 text-sm font-medium text-black transition-transform hover:scale-[1.02]"
-          >
-            Continue with Google
-          </Link>
+          />
         </div>
       ) : (
         user && (

@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import ChunkedUpload, { BIG_FILE } from '@/components/ChunkedUpload';
+import SignInModal from '@/components/SignInModal';
 import { stashFile, unstashFile } from '@/lib/file-stash';
 
 /**
@@ -25,6 +26,7 @@ export default function UploadForm() {
   const [bigFile, setBigFile] = useState<File | null>(null);
   const [restored, setRestored] = useState(false);
   const [qualityWarning, setQualityWarning] = useState<string | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
 
   // After a sign-in redirect, restore the stashed file (one-shot).
   useEffect(() => {
@@ -42,7 +44,7 @@ export default function UploadForm() {
     };
   }, []);
 
-  /** Stash the file, then send the user to sign in (returns here after). */
+  /** Stash the file, then open the sign-in modal (returns here after). */
   async function sendToSignIn(file: File) {
     const ok = await stashFile('capture-pending', file);
     if (!ok) {
@@ -50,7 +52,7 @@ export default function UploadForm() {
       setPhase('error');
       return;
     }
-    router.push('/signin?callbackUrl=/capture');
+    setSignInOpen(true);
   }
 
   async function submit(e: React.FormEvent) {
@@ -228,6 +230,7 @@ export default function UploadForm() {
       >
         Upload and reconstruct
       </button>
+      <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} callbackUrl="/capture" />
     </form>
   );
 }

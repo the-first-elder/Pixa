@@ -1,6 +1,7 @@
 import { auth, signOut } from '@/auth';
 import { authEnabled } from '@/lib/authz';
 import NotificationsBell from '@/components/NotificationsBell';
+import SignInButton from '@/components/SignInButton';
 import Link from 'next/link';
 
 /**
@@ -14,12 +15,10 @@ export default async function AuthNav() {
   const uid = (session as { uid?: string } | null)?.uid;
   if (!user || !uid) {
     return (
-      <Link
-        href="/signin"
+      <SignInButton
+        label="Sign in"
         className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition-colors hover:border-neutral-400"
-      >
-        Sign in
-      </Link>
+      />
     );
   }
   return (

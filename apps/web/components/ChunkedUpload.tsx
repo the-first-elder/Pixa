@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { stashFile } from '@/lib/file-stash';
+import SignInModal from './SignInModal';
 
 const CHUNK = 8 * 1024 * 1024;
 const BIG_FILE = 50 * 1024 * 1024;
@@ -17,6 +18,7 @@ export default function ChunkedUpload({ file, name }: { file: File; name: string
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
   const stopRef = useRef(false);
 
   async function start(resumeId?: string) {
@@ -41,7 +43,7 @@ export default function ChunkedUpload({ file, name }: { file: File; name: string
             setError('Please sign in, then select your video again.');
             return { paused: false as const, uploadId: undefined as string | undefined };
           }
-          router.push('/signin?callbackUrl=/capture');
+          setSignInOpen(true);
           return { paused: false as const, uploadId: undefined as string | undefined };
         }
         if (!create.ok) {
@@ -131,6 +133,7 @@ export default function ChunkedUpload({ file, name }: { file: File; name: string
         </div>
       )}
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+      <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} callbackUrl="/capture" />
     </div>
   );
 }
