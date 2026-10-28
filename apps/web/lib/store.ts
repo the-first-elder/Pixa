@@ -29,6 +29,13 @@ export interface JobTransition {
   at: string;
 }
 
+export interface JobDetail {
+  step?: number;
+  total?: number;
+  etaSeconds?: number;
+  source?: string;
+}
+
 export interface ProcessingJob {
   id: string;
   sceneId: string;
@@ -44,6 +51,7 @@ export interface ProcessingJob {
   backendHandle?: unknown;
   waitingForTrainer?: boolean;
   waitingSince?: string;
+  detail?: JobDetail | null;
   ownerId?: string | null;
 }
 

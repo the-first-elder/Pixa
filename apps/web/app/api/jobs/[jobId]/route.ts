@@ -29,6 +29,7 @@ export async function GET(
     status: job.status,
     progress: job.progress,
     startedAt: job.startedAt,
+    detail: job.detail ?? null,
     ...(job.waitingForTrainer ? { waitingForTrainer: true as const, waitingSince: job.waitingSince ?? null } : {}),
     ...(job.errorCode ? { errorCode: job.errorCode, errorMessage: job.errorMessage } : {}),
     transitions: job.transitions,

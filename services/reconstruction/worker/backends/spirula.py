@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import shutil
 import signal
 import socket
@@ -283,6 +284,23 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
             if size != last_size:
                 last_size = size
                 last_growth = time.time()
+                # Trainer progress → job record (drives the live % + ETA in
+                # the UI). Parsed from the trainer's own step/ETA lines; the
+                # UI labels the ETA as a trainer estimate, not a promise.
+                m = re.search(r"step\s+(\d+)/(\d+).*?ETA\s+(\d+):(\d+):(\d+)",
+                              tail)
+                if m:
+                    step, total = int(m.group(1)), int(m.group(2))
+                    eta_s = (int(m.group(3)) * 3600 + int(m.group(4)) * 60
+                             + int(m.group(5)))
+                    pct = 50 + round(40 * step / max(total, 1))
+                    try:
+                        store.update_progress(
+                            job_id, pct,
+                            {"step": step, "total": total,
+                             "etaSeconds": eta_s, "source": "trainer-log"})
+                    except OSError:
+                        pass
             elif time.time() - last_growth > stall_limit:
                 raise SpirulaError(
                     f"STALLED: trainer log silent for {int(stall_limit / 60)} min "
@@ -346,6 +364,7 @@ def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
         "posesPath": sparse if os.path.isdir(sparse) else None,
         "posesFormat": "colmap-sparse",
     }
+    jobs[job_id].pop("detail", None)  # live ETA is meaningless once ready
     frames_b = len([f for f in os.listdir(images_dir) if f.endswith(".jpg")]) if os.path.isdir(images_dir) else None
     jobs[job_id]["diagnostics"] = {
         "cameraPosesEstimated": True,
@@ -495,6 +514,13 @@ class SpirulaBackend:
                     code = store.error_code(msg, "SPIRULA_FAILED")
                     break
             mark("FAILED", msg)
+            try:
+                _jobs = store._load("jobs.json")
+                if job_id in _jobs:
+                    _jobs[job_id].pop("detail", None)
+                    store._save("jobs.json", _jobs)
+            except OSError:
+                pass
             return store.transition(job_id, "failed", progress=None,
                                     errorCode=code, errorMessage=msg)
 

@@ -10,6 +10,7 @@ interface JobState {
   errorMessage?: string;
   waitingForTrainer?: boolean;
   startedAt?: string;
+  detail?: { step?: number; total?: number; etaSeconds?: number; source?: string } | null;
 }
 
 function fmtElapsed(ms: number): string {
@@ -127,6 +128,14 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
       {job.waitingForTrainer && job.status !== 'ready' && job.status !== 'failed' && (
         <p className="mt-2 text-amber-400">
           Queued behind the running training — starts automatically when the trainer frees up.
+        </p>
+      )}
+      {active && job.detail?.step != null && job.detail?.total != null && (
+        <p className="mt-2 text-xs text-neutral-400">
+          Step {job.detail.step.toLocaleString()} / {job.detail.total.toLocaleString()}
+          {typeof job.detail.etaSeconds === 'number' && job.detail.etaSeconds > 0 && (
+            <> · ~{fmtElapsed(job.detail.etaSeconds * 1000)} left <span title="Estimated by the trainer from current speed; fluctuates">(trainer estimate)</span></>
+          )}
         </p>
       )}
       {job.status === 'failed' && (

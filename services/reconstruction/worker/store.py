@@ -136,6 +136,21 @@ def transition(job_id: str, status: str, **fields: Any) -> dict[str, Any]:
     return job
 
 
+def update_progress(job_id: str, progress: int | None,
+                    detail: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Update progress/detail without appending a transition (for frequent
+    polling loops — transitions are stage changes only, not heartbeats)."""
+    jobs = _load("jobs.json")
+    job = jobs.get(job_id)
+    if job is None:
+        return None
+    job["progress"] = progress
+    if detail is not None:
+        job["detail"] = detail
+    _save("jobs.json", jobs)
+    return job
+
+
 def get_job(job_id: str) -> dict[str, Any]:
     return _load("jobs.json")[job_id]
 
