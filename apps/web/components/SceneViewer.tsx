@@ -23,7 +23,6 @@ export interface ViewerHandle {
 }
 
 export type ViewerMode = 'orbit' | 'walk' | 'rooms';
-export type ViewLayer = 'splats' | 'mesh';
 
 export type ViewerStatus =
   | 'loading-manifest'
@@ -62,8 +61,6 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
   const [detail, setDetail] = useState<string>('');
   const [mode, setModeState] = useState<ViewerMode>('orbit');
   const [meshReady, setMeshReady] = useState(false);
-  const [layer, setLayerState] = useState<ViewLayer>('splats');
-  const setLayerRef = useRef<(l: ViewLayer) => void>(() => {});
   const modeRef = useRef<ViewerMode>('orbit');
   const setModeRef = useRef<(m: ViewerMode) => void>(() => {});
   const meshReadyRef = useRef<(ready: boolean) => void>(() => {});
@@ -117,11 +114,6 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x000000);
-        // Lights for mesh-layer viewing (splat shaders ignore scene lights).
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.1));
-        const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-        sun.position.set(3, 5, 2);
-        scene.add(sun);
         const camera = new THREE.PerspectiveCamera(72, 1, 0.01, 1000);
         camera.position.set(3, 2, 3);
         resize();
@@ -336,29 +328,6 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         });
         mesh.frustumCulled = false;
         worldGroup.add(mesh as unknown as THREE.Object3D);
-        const splatMesh = mesh as unknown as THREE.Object3D;
-        // Splats | Mesh layer toggle: mesh view shows the collision geometry
-        // truthfully (vertex colors + lights) for stability comparison.
-        setLayerRef.current = (l: ViewLayer) => {
-          setLayerState(l);
-          splatMesh.visible = l === 'splats';
-          for (const c of colliders) {
-            const m = c as THREE.Mesh;
-            const mat = m.material as THREE.Material;
-            const orig = (m.userData.origFlags ?? { colorWrite: true, depthWrite: true }) as {
-              colorWrite: boolean;
-              depthWrite: boolean;
-            };
-            if (l === 'mesh') {
-              mat.colorWrite = orig.colorWrite;
-              mat.depthWrite = orig.depthWrite;
-            } else {
-              mat.colorWrite = false;
-              mat.depthWrite = false;
-            }
-          }
-          needsRender = true;
-        };
 
         // Highlight markers: small emissive spheres at triangulated object
         // positions. These mark approximate locations, not object outlines —
@@ -612,26 +581,6 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           </button>
           {mode === 'walk' && (
             <span className="px-2 text-neutral-500">drag to look · WASD to move · free-fly, no collision</span>
-          )}
-          {meshReady && (
-            <>
-              <button
-                type="button"
-                onClick={() => setLayerRef.current('splats')}
-                className={`rounded px-2 py-1 ${layer === 'splats' ? 'bg-white text-black' : 'text-neutral-300'}`}
-                title="Photorealistic splat rendering"
-              >
-                Splats
-              </button>
-              <button
-                type="button"
-                onClick={() => setLayerRef.current('mesh')}
-                className={`rounded px-2 py-1 ${layer === 'mesh' ? 'bg-white text-black' : 'text-neutral-300'}`}
-                title="Textured mesh geometry (stable, less photorealistic)"
-              >
-                Mesh
-              </button>
-            </>
           )}
           {mode === 'rooms' && (
             <span className="px-2 text-neutral-500">drag to look · WASD to walk · +/− eye height · stays inside, walls + ceiling constrain</span>
