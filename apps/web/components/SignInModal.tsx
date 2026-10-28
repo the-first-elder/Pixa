@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { signIn } from 'next-auth/react';
 
 /**
@@ -30,7 +31,11 @@ export default function SignInModal({
 
   if (!open) return null;
 
-  return (
+  // Portaled to document.body: ancestors with filter/backdrop-filter/
+  // transforms (e.g. the blurred site header) otherwise hijack `fixed`
+  // positioning and pin the dialog to themselves. At body level the
+  // overlay is always viewport-centered.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -67,6 +72,7 @@ export default function SignInModal({
           Pixa stores only your account ID, email, and display name — nothing else.
         </p>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
