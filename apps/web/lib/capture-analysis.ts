@@ -3,6 +3,18 @@
  * Runs on live camera frames at a few Hz: motion speed, blur, brightness.
  * Zero latency, zero server cost — the real-time half of the capture director.
  * Semantic coverage ("film the doorway") comes from server check-ins.
+ *
+ * Threshold provenance (calibrated 2026-10-28, not guessed):
+ * - Brightness: tester3.mp4 (good capture, 86% registered) measures YAVG
+ *   min 57 / mean 68 / max 87 via ffmpeg signalstats. Dark threshold 45 sits
+ *   below the worst good footage; bright threshold 210 catches only
+ *   genuinely blown-out frames. Canvas RGB-mean tracks YAVG within ±10.
+ * - Blur 60: conservative floor — only near-flat or severely smeared frames
+ *   trip it (synthetic sharp checkerboard reads ~100000, flat reads 0).
+ *   May MISS mild blur but will not nag good footage. Blank walls are a
+ *   coverage problem, handled separately — not blur.
+ * - Speed 14: mean abs pixel diff between 0.5 s-apart frames on a 160px grid.
+ *   Mid-range for walking pans; field-tunable once recorder telemetry exists.
  */
 
 /** Mean absolute inter-frame difference, 0..255. High = fast motion. */
@@ -117,8 +129,8 @@ export class GuideEngine {
     } else {
       this.blurStreak = 0;
     }
-    // Light.
-    if (metrics.light < 38) {
+    // Light (see provenance note above).
+    if (metrics.light < 45) {
       this.darkStreak++;
       if (this.darkStreak >= 4) {
         out.push({ level: 'warn', message: 'Too dark — turn on lights or avoid filming into darkness.' });
@@ -126,7 +138,7 @@ export class GuideEngine {
     } else {
       this.darkStreak = 0;
     }
-    if (metrics.light > 215) {
+    if (metrics.light > 210) {
       this.brightStreak++;
       if (this.brightStreak >= 4) {
         out.push({ level: 'warn', message: 'Overexposed — avoid pointing directly at bright windows or bulbs.' });

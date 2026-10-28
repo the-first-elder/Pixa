@@ -3,7 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { blurScore, brightness, frameDiff, GuideEngine } from '@/lib/capture-analysis';
+import { buildReport, type CaptureReport, type MetricSample } from '@/lib/capture-report';
 import { CompassDial, useCoverageCompass } from './CoverageCompass';
+import CaptureReportView from './CaptureReportView';
 
 type Phase = 'idle' | 'preview' | 'recording' | 'review' | 'uploading' | 'error';
 
@@ -28,15 +30,44 @@ export default function CaptureRecorder() {
   const [advice, setAdvice] = useState<{ level: string; message: string }[]>([]);
   const [meters, setMeters] = useState({ speed: 0, blur: 0, light: 0 });
   const [elapsed, setElapsed] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [pass, setPass] = useState(1);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [report, setReport] = useState<CaptureReport | null>(null);
   const blobRef = useRef<Blob | null>(null);
+  const statsRef = useRef<MetricSample[]>([]);
+  const orientRef = useRef({ roll: 0, pitch: 0, sudden: 0, lastYaw: null as number | null });
+  const elapsedRef = useRef(0);
+  const compassRef = useRef({ supported: false, covered: [] as boolean[], lookedUp: false, lookedDown: false, uncoveredHint: null as string | null });
   const qualityOkRef = useRef(true);
   const { state: compass, requestPermission, reset: resetCompass } = useCoverageCompass(
     phase === 'recording',
     qualityOkRef.current,
   );
 
+  // Mirror hook/state values needed inside recorder callbacks.
+  useEffect(() => {
+    compassRef.current = {
+      supported: compass.supported,
+      covered: compass.covered,
+      lookedUp: compass.lookedUp,
+      lookedDown: compass.lookedDown,
+      uncoveredHint: compass.uncoveredHint,
+    };
+  }, [compass]);
+
   useEffect(() => () => stopStream(), []);
+
+  // Unsaved-recording protection: recording in progress or unreviewed blob.
+  useEffect(() => {
+    const guard = (e: BeforeUnloadEvent) => {
+      if (phase === 'recording' || (phase === 'review' && blobRef.current)) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [phase]);
 
   function stopStream() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -162,6 +193,7 @@ export default function CaptureRecorder() {
     canvas.width = W;
     canvas.height = H;
     let prev: ImageData | null = null;
+    const t0 = Date.now();
     const timer = window.setInterval(() => {
       if (!streamRef.current || video.readyState < 2) return;
       try {
@@ -172,7 +204,9 @@ export default function CaptureRecorder() {
         const blur = blurScore(curr);
         const light = brightness(curr);
         setMeters({ speed: Math.round(speed), blur: Math.round(blur), light: Math.round(light) });
-        const ok = blur >= 60 && light >= 38 && light <= 215;
+        statsRef.current.push({ t: (Date.now() - t0) / 1000, speed, blur, light });
+        if (statsRef.current.length > 1500) statsRef.current.shift();
+        const ok = blur >= 60 && light >= 45 && light <= 210;
         qualityOkRef.current = ok;
         setAdvice(guideRef.current.advise({ speed, blur, light }));
       } catch {
@@ -191,6 +225,8 @@ export default function CaptureRecorder() {
     const stream = streamRef.current;
     if (!stream) return;
     chunksRef.current = [];
+    statsRef.current = [];
+    orientRef.current = { roll: 0, pitch: 0, sudden: 0, lastYaw: null };
     resetCompass();
     const mime = MediaRecorder.isTypeSupported('video/mp4')
       ? 'video/mp4'
@@ -205,22 +241,102 @@ export default function CaptureRecorder() {
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
       blobRef.current = blob;
       setBlobUrl(URL.createObjectURL(blob));
+      setReport(
+        buildReport({
+          samples: statsRef.current,
+          durationSec: elapsedRef.current,
+          estimatedBytes: Math.round((8_000_000 / 8) * elapsedRef.current),
+          mimeType: recorder.mimeType,
+          compass: {
+            supported: compassRef.current.supported,
+            sectorsCovered: compassRef.current.covered.filter(Boolean).length,
+            sectorsTotal: compassRef.current.covered.length,
+            lookedUp: compassRef.current.lookedUp,
+            lookedDown: compassRef.current.lookedDown,
+            uncoveredHint: compassRef.current.uncoveredHint,
+          },
+          rollWarnings: orientRef.current.roll,
+          pitchWarnings: orientRef.current.pitch,
+          suddenMoves: orientRef.current.sudden,
+        }),
+      );
+      setPaused(false);
       setPhase('review');
     };
     recorder.start(1000);
     setElapsed(0);
+    setPaused(false);
     setPhase('recording');
     analyzeLoop();
   }
 
+  // Orientation tracking during recording: roll/pitch warnings + sudden turns.
+  // Thresholds are loose heuristics (sensor axes vary); counts only, and the
+  // report labels them as such rather than ground truth.
   useEffect(() => {
     if (phase !== 'recording') return;
-    const t = window.setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => window.clearInterval(t);
+    let rollStreak = 0;
+    let pitchStreak = 0;
+    const handler = (e: DeviceOrientationEvent) => {
+      const { alpha, beta, gamma } = e;
+      if (gamma !== null && Math.abs(gamma) > 30) {
+        rollStreak++;
+        if (rollStreak === 6) orientRef.current.roll++;
+      } else {
+        rollStreak = 0;
+      }
+      if (beta !== null && (beta < 25 || beta > 155)) {
+        pitchStreak++;
+        if (pitchStreak === 6) orientRef.current.pitch++;
+      } else {
+        pitchStreak = 0;
+      }
+      if (alpha !== null) {
+        const yaw = ((alpha % 360) + 360) % 360;
+        const last = orientRef.current.lastYaw;
+        if (last !== null) {
+          let d = Math.abs(yaw - last);
+          if (d > 180) d = 360 - d;
+          if (d > 50) orientRef.current.sudden++;
+        }
+        orientRef.current.lastYaw = yaw;
+      }
+    };
+    window.addEventListener('deviceorientation', handler);
+    return () => window.removeEventListener('deviceorientation', handler);
   }, [phase]);
+
+  function pauseRecording() {
+    recorderRef.current?.pause();
+    setPaused(true);
+  }
+
+  function resumeRecording() {
+    recorderRef.current?.resume();
+    setPaused(false);
+  }
+
+  useEffect(() => {
+    if (phase !== 'recording' || paused) return;
+    const t = window.setInterval(() => {
+      setElapsed((e) => {
+        elapsedRef.current = e + 1;
+        return e + 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [phase, paused]);
 
   function stopRecording() {
     recorderRef.current?.stop();
+  }
+
+  function discardRecording() {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    blobRef.current = null;
+    setBlobUrl(null);
+    setReport(null);
+    setPhase('preview');
   }
 
   async function useRecording() {
@@ -241,7 +357,9 @@ export default function CaptureRecorder() {
       const createRes = await fetch('/api/scenes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: `Guided capture ${new Date().toLocaleString()}` }),
+        body: JSON.stringify({
+          name: pass > 1 ? `Guided capture ${new Date().toLocaleString()} (pass ${pass})` : `Guided capture ${new Date().toLocaleString()}`,
+        }),
       });
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
@@ -324,7 +442,12 @@ export default function CaptureRecorder() {
             <span>motion {meters.speed}</span>
             <span>sharp {meters.blur}</span>
             <span>light {meters.light}</span>
-            {phase === 'recording' && <span className="ml-auto text-red-400">● {fmt(elapsed)}</span>}
+            {phase === 'recording' && (
+              <span className="ml-auto text-red-400">
+                ● {fmt(elapsed)}
+                {paused ? ' (paused)' : ''} · ~{Math.max(1, Math.round(((8_000_000 / 8) * elapsed) / 1048576))} MB
+              </span>
+            )}
           </div>
           <div className="mt-2 space-y-1">
             {advice.map((a, i) => (
@@ -361,23 +484,42 @@ export default function CaptureRecorder() {
               </div>
             </div>
           )}
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             {phase === 'preview' ? (
               <button
                 type="button"
                 onClick={startRecording}
                 className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white"
               >
-                ● Record
+                ● Record{pass > 1 ? ` pass ${pass}` : ''}
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={stopRecording}
-                className="rounded-md bg-neutral-700 px-4 py-2 text-sm font-medium"
-              >
-                Stop
-              </button>
+              <>
+                {!paused ? (
+                  <button
+                    type="button"
+                    onClick={pauseRecording}
+                    className="rounded-md bg-neutral-700 px-4 py-2 text-sm font-medium"
+                  >
+                    Pause
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={resumeRecording}
+                    className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black"
+                  >
+                    Resume
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white"
+                >
+                  Stop
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -385,21 +527,35 @@ export default function CaptureRecorder() {
       {phase === 'review' && blobUrl && (
         <div className="mt-3">
           <video src={blobUrl} controls playsInline className="w-full rounded-md bg-black" />
-          <p className="mt-2 text-xs text-neutral-500">Review, then send to reconstruction.</p>
-          <div className="mt-2 flex gap-2">
+          {report && <CaptureReportView report={report} />}
+          <p className="mt-2 text-xs text-neutral-500">
+            A passing report helps; it does not guarantee reconstruction. True coverage is established afterwards.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={useRecording}
               className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black"
             >
-              Use this recording
+              Continue with this recording
             </button>
             <button
               type="button"
-              onClick={() => setPhase('preview')}
+              onClick={() => {
+                discardRecording();
+                setPass((p) => p + 1);
+              }}
               className="rounded-md border border-neutral-700 px-4 py-2 text-sm"
+              title="Start a new pass (separate reconstruction)"
             >
-              Re-record
+              Record missing areas (new pass)
+            </button>
+            <button
+              type="button"
+              onClick={discardRecording}
+              className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-neutral-400"
+            >
+              Discard and restart
             </button>
           </div>
         </div>
