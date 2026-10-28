@@ -4,5 +4,9 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
-  "types": "src/index.ts"
+  "types": "src/index.ts",
+  "dependencies": {
+    "@meta-sam/parser": "^0.1.0",
+    "openai": "^7.45.1"
+  }
 }
