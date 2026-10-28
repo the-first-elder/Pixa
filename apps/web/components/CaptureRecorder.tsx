@@ -284,6 +284,18 @@ export default function CaptureRecorder() {
           Open camera
         </button>
       )}
+      {/* Always mounted so setup can attach the stream before preview shows.
+          Hidden until there is something to display. */}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        className={
+          phase === 'preview' || phase === 'recording'
+            ? 'mt-3 w-full rounded-md bg-black'
+            : 'hidden'
+        }
+      />
       {(phase === 'preview' || phase === 'recording') && (
         <div className="mt-3">
           {cameras.length > 1 && (
@@ -307,7 +319,6 @@ export default function CaptureRecorder() {
               </select>
             </div>
           )}
-          <video ref={videoRef} muted playsInline className="w-full rounded-md bg-black" />
           <canvas ref={canvasRef} className="hidden" />
           <div className="mt-2 flex items-center gap-3 text-xs text-neutral-400">
             <span>motion {meters.speed}</span>
