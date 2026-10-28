@@ -1,3 +1,4 @@
+import CaptureRecorder from '@/components/CaptureRecorder';
 import UploadForm from './UploadForm';
 
 export default function CapturePage() {
@@ -9,6 +10,8 @@ export default function CapturePage() {
         <li>Move slowly; keep surfaces in overlapping views; cover corners and doorways.</li>
         <li>Upload below. Processing runs asynchronously — the page reports real job stages.</li>
       </ol>
+      <CaptureRecorder />
+      <h2 className="mt-10 text-lg font-medium">Or upload a file</h2>
       <UploadForm />
     </main>
   );
