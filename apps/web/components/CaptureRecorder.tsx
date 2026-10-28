@@ -32,6 +32,7 @@ export default function CaptureRecorder() {
   const [elapsed, setElapsed] = useState(0);
   const [paused, setPaused] = useState(false);
   const [pass, setPass] = useState(1);
+  const [scout, setScout] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [report, setReport] = useState<CaptureReport | null>(null);
   const blobRef = useRef<Blob | null>(null);
@@ -327,6 +328,40 @@ export default function CaptureRecorder() {
     return () => window.clearInterval(t);
   }, [phase, paused]);
 
+  // Server check-in: every ~25 s of recording, send 2 thumbnail frames for
+  // semantic coverage hints. Cheap by design; routine checks stay on-device.
+  // Failures are silent — local guidance keeps working regardless.
+  useEffect(() => {
+    if (phase !== 'recording') return;
+    let cancelled = false;
+    const send = () => {
+      const canvas = canvasRef.current;
+      if (!canvas || paused) return;
+      canvas.toBlob(async (blob) => {
+        if (!blob || cancelled) return;
+        try {
+          const form = new FormData();
+          form.append('frames', blob, 'now.jpg');
+          form.append(
+            'context',
+            JSON.stringify({ elapsedSec: elapsedRef.current, pass }),
+          );
+          const res = await fetch('/api/capture/checkin', { method: 'POST', body: form });
+          if (!res.ok || cancelled) return;
+          const data = (await res.json()) as { nextInstruction?: string };
+          if (data.nextInstruction && !cancelled) setScout(data.nextInstruction);
+        } catch {
+          // Silent: on-device guidance continues.
+        }
+      }, 'image/jpeg', 0.7);
+    };
+    const t = window.setInterval(send, 25000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, [phase, paused, pass]);
+
   function stopRecording() {
     recorderRef.current?.stop();
   }
@@ -450,6 +485,9 @@ export default function CaptureRecorder() {
             )}
           </div>
           <div className="mt-2 space-y-1">
+            {scout && phase === 'recording' && (
+              <p className="text-sm text-sky-300">Scout: {scout}</p>
+            )}
             {advice.map((a, i) => (
               <p
                 key={i}
