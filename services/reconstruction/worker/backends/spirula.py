@@ -25,6 +25,7 @@ import signal
 import socket
 import struct
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -186,6 +187,19 @@ def _viewer_port_busy() -> bool:
         return s.connect_ex(("127.0.0.1", SPIRULA_VIEWER_PORT)) == 0
 
 
+def _quality_flags(iterations: int) -> list[str]:
+    """Training quality flags by tier (mapped from iterations, the tier knob).
+    Defaults (medium, 1M cap, no floater suppression) visibly underperform on
+    indoor rooms; ultra+2M+mild suppression is measured-safe on 24GB M4.
+    The exact command is logged to train.log for reproducibility."""
+    if iterations >= 30000:
+        return ["--quality", "ultra", "--cap-max", "2000000",
+                "--floater-suppression", "mild"]
+    if iterations >= 15000:
+        return ["--quality", "high", "--floater-suppression", "mild"]
+    return []
+
+
 def _train_and_watch(binpath: str, workspace: str, iterations: int,
                      workdir: str, timeout: int, job_id: str) -> str:
     """Train to completion, then STOP the process.
@@ -234,6 +248,7 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
     log_path = os.path.join(workdir, "train.log")
     cmd = [binpath, "train", "--data", workspace, "--data-format", "colmap",
            "--num-iterations", str(iterations),
+           *_quality_flags(iterations),
            "--output-dir-prefix", os.path.join(workdir, "outputs")]
     with open(log_path, "w", encoding="utf-8") as log:
         log.write(f"$ {' '.join(cmd)}\n")
@@ -332,6 +347,54 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
             pass
 
 
+def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> list[str]:
+    """Best-effort post-training finish: collision mesh + viewpoints + world
+    leveling + coverage. These used to be manual operator steps; scenes
+    without them render as a blob in a void with no navigation. Failures here
+    only add warning notes — they never fail an otherwise good training."""
+    notes: list[str] = []
+    try:
+        jobs = store._load("jobs.json")
+        scene_id = (jobs.get(job_id) or {}).get("sceneId")
+    except OSError:
+        return ["finish skipped: job record unreadable"]
+    if not scene_id:
+        return ["finish skipped: no scene linked"]
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))))
+    storage = store.storage_dir()
+    env = {**os.environ, "STORAGE_DIR": storage}
+
+    def run_step(label: str, cmd: list[str], timeout: int) -> None:
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                               cwd=repo_root, env=env, check=False)
+            if p.returncode == 0:
+                notes.append(f"{label}: ok")
+            else:
+                notes.append(f"{label}: failed ({(p.stderr or p.stdout or '')[:120]})")
+        except subprocess.TimeoutExpired:
+            notes.append(f"{label}: timed out")
+        except OSError as e:
+            notes.append(f"{label}: could not run ({e})")
+
+    # Collision mesh for rooms-mode walking (viewer auto-discovers it).
+    mesh_base = os.path.join(storage, "assets", scene_id, "mesh")
+    os.makedirs(os.path.dirname(mesh_base), exist_ok=True)
+    run_step("mesh", [binary(), "mesh", asset_path,
+                      "--data", os.path.join(workdir, "workspace"),
+                      "--data-format", "colmap",
+                      "--format", "glb", "--output", mesh_base], 900)
+    # Navigation + leveling + coverage (repo scripts).
+    run_step("viewpoints", ["npx", "-y", "tsx", "scripts/derive-viewpoints.mts",
+                             "--scene", scene_id], 300)
+    run_step("level-world", [sys.executable, "scripts/level-world.py",
+                             "--scene", scene_id], 300)
+    run_step("coverage", ["npx", "-y", "tsx", "scripts/coverage.mts",
+                          "--scene", scene_id], 300)
+    return notes
+
+
 def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
                  partial: bool = False) -> dict[str, Any]:
     """Verify the training artifact and mark the job ready.
@@ -366,6 +429,7 @@ def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
     }
     jobs[job_id].pop("detail", None)  # live ETA is meaningless once ready
     frames_b = len([f for f in os.listdir(images_dir) if f.endswith(".jpg")]) if os.path.isdir(images_dir) else None
+    finish_notes = _auto_finish(job_id, workdir, asset_path, sparse)
     jobs[job_id]["diagnostics"] = {
         "cameraPosesEstimated": True,
         "framesRegistered": None,
@@ -378,6 +442,7 @@ def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
              if partial else "") +
             "Poses from Spirula SfM (COLMAP-format sparse). "
             "Per-frame registration counts not yet parsed (Stage 3).",
+            *finish_notes,
         ],
     }
     store._save("jobs.json", jobs)

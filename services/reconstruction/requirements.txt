@@ -1,2 +1,6 @@
-# WorldLens reconstruction worker — stdlib only (ffmpeg/ffprobe binaries required).
-# Heavy GPU training never runs here; it runs in pluggable backends (KIRI API, RunPod pod).
+# Pixa reconstruction worker.
+# FFmpeg/ffprobe binaries + Spirula binary required; GPU training runs in
+# pluggable backends (local Spirula, KIRI API, RunPod pod).
+# Pillow + numpy are used for frame sharpness filtering (stdlib fallback N/A).
+Pillow>=10
+numpy>=1.24

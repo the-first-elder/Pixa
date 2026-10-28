@@ -60,6 +60,42 @@ def probe_video(path: str, ext_hint: str | None = None) -> dict[str, Any]:
     }
 
 
+def _laplacian_variance(path: str) -> float:
+    """Sharpness score via variance of Laplacian (higher = sharper)."""
+    from PIL import Image
+    import numpy as np
+    with Image.open(path) as img:
+        g = img.convert("L")
+        g.thumbnail((320, 320))
+        a = np.asarray(g, dtype=np.float32)
+    lap = (4 * a[1:-1, 1:-1] - a[:-2, 1:-1] - a[2:, 1:-1]
+           - a[1:-1, :-2] - a[1:-1, 2:])
+    return float(lap.var())
+
+
+def _filter_blurry(out_dir: str, files: list[str]) -> list[str]:
+    """Delete severely blurred frames. Returns dropped filenames."""
+    import statistics
+    if len(files) < 12:
+        return []
+    scores = [(f, _laplacian_variance(os.path.join(out_dir, f))) for f in files]
+    median = statistics.median(s for _, s in scores)
+    threshold = median * 0.35
+    dropped: list[str] = []
+    prev_dropped = False
+    for i, (f, s) in enumerate(scores):
+        if i == 0 or i == len(scores) - 1:
+            prev_dropped = False
+            continue  # keep anchors
+        if s < threshold and not prev_dropped and (len(files) - len(dropped) > 8):
+            os.remove(os.path.join(out_dir, f))
+            dropped.append(f)
+            prev_dropped = True
+        else:
+            prev_dropped = False
+    return dropped
+
+
 def checksum(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -91,16 +127,32 @@ def extract_frames(video: str, out_dir: str, pipeline: str, fps_override: float 
         cap_note = "analysis frames (1 fps, width ≤1280, never upscaled, capped at 120)"
     elif pipeline == "B":
         fps = fps_override or 2.0
-        vf = f"fps={fps},scale=w='if(gt(iw,1600),1600,iw)':h='-2'"
-        cap_note = f"reconstruction frames ({fps} fps, width ≤1600, never upscaled)"
+        vf = f"fps={fps},scale=w='if(gt(iw,2048),2048,iw)':h='-2'"
+        cap_note = f"reconstruction frames ({fps} fps, width ≤2048, never upscaled)"
     else:
         raise MediaError("pipeline must be 'A' or 'B'")
     os.makedirs(out_dir, exist_ok=True)
     pattern = os.path.join(out_dir, "%04d.jpg")
-    p = _run(["ffmpeg", "-y", "-v", "error", "-i", video, "-vf", vf, pattern])
+    # -q:v 2: high-quality JPEG. The ffmpeg default (~q5) discards ~40% of
+    # detail (measured 25KB vs 42KB on identical 478p frames) — detail the
+    # reconstruction can never recover. Verified 2026-10-28.
+    p = _run(["ffmpeg", "-y", "-v", "error", "-i", video, "-vf", vf, "-q:v", "2", pattern])
     if p.returncode != 0:
         raise MediaError(f"ffmpeg extraction failed: {p.stderr.strip()[:300]}")
     files = sorted(f for f in os.listdir(out_dir) if f.endswith(".jpg"))
+    dropped: list[str] = []
+    if pipeline == "B" and os.environ.get("WL_NO_SHARPNESS_FILTER") != "1":
+        # Drop severely blurred frames (motion smear poisons both SfM matching
+        # and splat sharpness). Conservative: below 35% of median sharpness,
+        # never two adjacent (preserve sequence continuity), never first/last
+        # (loop-closure anchors), never below 8 frames. Original numbering is
+        # kept (gaps OK — COLMAP + our 2N-1 mapping tolerate missing files).
+        try:
+            dropped = _filter_blurry(out_dir, files)
+            files = [f for f in files if f not in set(dropped)]
+        except Exception as e:
+            # Filtering must never break extraction; log and keep everything.
+            dropped = [f"filter-skipped: {e}"]
     if pipeline == "A":
         files = files[:120]
     manifest = {
@@ -108,6 +160,7 @@ def extract_frames(video: str, out_dir: str, pipeline: str, fps_override: float 
         "policy": cap_note,
         "frames": files,
         "count": len(files),
+        "droppedBlurry": dropped,
     }
     with open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
