@@ -40,6 +40,38 @@ Sign in with Google, get a visual **My Worlds** library: searchable, sortable, t
 
 ---
 
+## AI integration: four models, one thin adapter layer
+
+All Meta Model API access flows through `packages/model-adapters` (single
+config, secrets server-side only, Standard non-contributor models for private
+captures). Three models are live in user-facing flows today:
+
+```mermaid
+flowchart LR
+    subgraph Models
+        SP[Muse Spark 1.3\nreasoning + tools]
+        SA[SAM 3.1\nsegmentation + tracking]
+        VO[Muse Voice Transcribe 1.0\nspeech to text]
+    end
+    subgraph Surfaces
+        IDX[Indexing: labels → boxes → tracks]
+        AST[Assistant: grounded Q&A + 8 tools]
+        VOI[Voice: push-to-talk in,\nspoken answers out]
+        CAP[Capture coach: live analysis]
+    end
+    SP --> IDX
+    SA --> IDX
+    SP --> AST
+    SA --> AST
+    VO --> VOI
+    SP --> CAP
+```
+
+- **Spark does the thinking.** It names object categories during indexing, runs the assistant's tool-calling loop (navigate, focus, highlight, route, inspect, compare, measure, calibrate), and analyzes capture check-ins. Every answer cites evidence — entity labels, frame ids — and it says "not captured" when the footage doesn't cover the question.
+- **SAM 3.1 does the seeing.** Boxes for detection, full-clip video tracks for per-instance identity with per-observation confidence. Detection output is never treated as 3D — it only becomes positions through the registration gauntlet below.
+- **Voice does the talking.** Push-to-talk transcribed by Muse Voice Transcribe; answers spoken back via browser speech synthesis. Ask about your space out loud while walking it.
+- **One honest boundary:** there is no Meta text-to-speech in the loop — spoken answers are browser-side synthesis, and the README says so instead of implying otherwise.
+
 ## Why this wins: the moat is verification
 
 Anyone can call a segmentation API. Almost nobody proves their geometry. Pixa's
