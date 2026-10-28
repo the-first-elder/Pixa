@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { readFileSync, existsSync } from 'node:fs';
 import { getScene } from '@/lib/store';
+import { canRead, sessionUser } from '@/lib/authz';
 import { readyAssetForScene } from '@/lib/store';
 
 /**
@@ -15,7 +16,10 @@ export async function GET(
 ) {
   const { id } = await params;
   const scene = getScene(id);
-  if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
   const asset = readyAssetForScene(id);
   if (!asset || !existsSync(asset.assetPath)) {
     return NextResponse.json({ error: 'No visual asset for this scene yet' }, { status: 404 });

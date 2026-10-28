@@ -3,6 +3,7 @@ import { assertManifestVersion } from '@pixa/scene-schema';
 import { getScene, latestJobForScene, updateScene } from '@/lib/store';
 import { getSceneIndex } from '@/lib/scene-index';
 import { manifestForScene } from '@/lib/manifest';
+import { canRead, canWrite, sessionUser } from '@/lib/authz';
 
 /**
  * GET /api/scenes/:sceneId — scene manifest + supported capabilities.
@@ -15,7 +16,11 @@ export async function GET(
 ) {
   const { id } = await params;
   const scene = getScene(id);
-  if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  // 404 for missing OR forbidden: private scene IDs are not enumerable.
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
   const manifest = manifestForScene(scene.id);
   if (manifest) assertManifestVersion(manifest);
   return NextResponse.json({
@@ -46,6 +51,10 @@ export async function PATCH(
   const { id } = await params;
   const scene = getScene(id);
   if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to edit this scene.' }, { status: user ? 403 : 401 });
+  }
   let body: { name?: unknown; visibility?: unknown };
   try {
     body = await req.json();

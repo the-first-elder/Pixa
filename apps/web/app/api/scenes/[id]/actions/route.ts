@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { authEnabled, sessionUser } from '@/lib/authz';
 import { confirmAction } from '@/lib/store';
 
 /**
@@ -7,6 +8,10 @@ import { confirmAction } from '@/lib/store';
  * This is what distinguishes what the AI requested from what really happened.
  */
 export async function POST(req: NextRequest) {
+  const user = await sessionUser();
+  if (authEnabled() && !user) {
+    return NextResponse.json({ error: 'Sign in to report actions.' }, { status: 401 });
+  }
   let body: {
     actionId?: unknown;
     executed?: unknown;

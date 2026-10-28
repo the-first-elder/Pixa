@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getScene } from '@/lib/store';
+import { canRead, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
 
 /**
@@ -14,7 +15,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string; name: string }> },
 ) {
   const { id, name } = await params;
-  if (!getScene(id)) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const scene = getScene(id);
+  const user = await sessionUser();
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
   if (!/^\d{4}\.jpg$/.test(name)) {
     return NextResponse.json({ error: 'Invalid frame name' }, { status: 400 });
   }

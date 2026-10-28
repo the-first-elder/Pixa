@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 import { createRecording } from '@/lib/recordings';
+import { canCreate, sessionUser } from '@/lib/authz';
+import { clientKey, rateLimit } from '@/lib/ratelimit';
 import { STORAGE_DIR } from '@/lib/config';
 import { workerDir } from '@/lib/worker';
 
@@ -9,6 +11,14 @@ import { workerDir } from '@/lib/worker';
  * analysis detached. Body: { name, videoPath } (path from upload complete).
  */
 export async function POST(req: NextRequest) {
+  const user = await sessionUser();
+  const uid = user?.uid ?? null;
+  if (!canCreate(uid)) {
+    return NextResponse.json({ error: 'Sign in to create a recording.' }, { status: 401 });
+  }
+  if (!rateLimit(`recordings:${clientKey(req, uid)}`, 10, 60_000)) {
+    return NextResponse.json({ error: 'Too many recordings — slow down.' }, { status: 429 });
+  }
   let body: { name?: unknown; videoPath?: unknown };
   try {
     body = await req.json();
@@ -23,7 +33,7 @@ export async function POST(req: NextRequest) {
   }
   let rec: { id: string };
   try {
-    rec = createRecording(body.name.trim().slice(0, 200), body.videoPath);
+    rec = createRecording(body.name.trim().slice(0, 200), body.videoPath, uid);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'Cannot register recording' },

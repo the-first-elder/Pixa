@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFileSync } from 'node:child_process';
 import { getRecording } from '@/lib/recordings';
+import { canWrite, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
 import { workerDir } from '@/lib/worker';
 
@@ -31,6 +32,10 @@ export async function POST(
   const { id, op } = await params;
   const rec = getRecording(id);
   if (!rec) return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(rec, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to edit this recording.' }, { status: user ? 403 : 401 });
+  }
   let body: { segment?: unknown; at?: unknown; segA?: unknown; segB?: unknown };
   try {
     body = await req.json();

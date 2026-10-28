@@ -44,6 +44,7 @@ export interface ProcessingJob {
   backendHandle?: unknown;
   waitingForTrainer?: boolean;
   waitingSince?: string;
+  ownerId?: string | null;
 }
 
 export interface Scene {
@@ -57,6 +58,7 @@ export interface Scene {
   sceneGraphVersion: number;
   visibility: 'private' | 'public';
   processingError: string | null;
+  ownerId?: string | null;
 }
 
 function dir(): string {
@@ -88,7 +90,7 @@ function newId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
 }
 
-export function createScene(name: string): Scene {
+export function createScene(name: string, ownerId?: string | null): Scene {
   const scenes = load<Scene>('scenes.json');
   const scene: Scene = {
     id: newId('scene'),
@@ -101,6 +103,7 @@ export function createScene(name: string): Scene {
     sceneGraphVersion: 0,
     visibility: 'private',
     processingError: null,
+    ownerId: ownerId ?? null,
   };
   scenes[scene.id] = scene;
   save('scenes.json', scenes);
@@ -121,7 +124,7 @@ export function updateScene(id: string, patch: Partial<Scene>): Scene {
   return updated;
 }
 
-export function createJob(sceneId: string, jobType: string): ProcessingJob {
+export function createJob(sceneId: string, jobType: string, ownerId?: string | null): ProcessingJob {
   const jobs = load<ProcessingJob>('jobs.json');
   const job: ProcessingJob = {
     id: newId('job'),
@@ -135,6 +138,7 @@ export function createJob(sceneId: string, jobType: string): ProcessingJob {
     errorMessage: null,
     diagnostics: null,
     transitions: [{ status: 'queued', at: now() }],
+    ownerId: ownerId ?? null,
   };
   jobs[job.id] = job;
   save('jobs.json', jobs);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getScene, getScale } from '@/lib/store';
+import { canRead, canWrite, sessionUser } from '@/lib/authz';
 import { calibrateSceneScale } from '@/lib/scale';
 
 /** GET /api/scenes/:sceneId/scale — current calibration (null = uncalibrated). */
@@ -8,7 +9,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!getScene(id)) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const scene = getScene(id);
+  const user = await sessionUser();
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
   return NextResponse.json({ scale: getScale(id) });
 }
 
@@ -22,7 +27,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!getScene(id)) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const scene = getScene(id);
+  if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to calibrate this scene.' }, { status: user ? 403 : 401 });
+  }
   let body: { referenceLabel?: unknown; dimension?: unknown; knownMeters?: unknown };
   try {
     body = await req.json();

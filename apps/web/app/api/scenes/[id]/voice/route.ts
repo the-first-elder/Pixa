@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { transcribe } from '@pixa/model-adapters';
 import { loadConfig } from '@pixa/model-adapters';
 import { getScene } from '@/lib/store';
+import { authEnabled, canRead, sessionUser } from '@/lib/authz';
 
 /**
  * POST /api/scenes/:sceneId/voice — push-to-talk speech input (PRD §12.3).
@@ -20,7 +21,15 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!getScene(id)) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const scene = getScene(id);
+  const user = await sessionUser();
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
+  // Transcription costs API money per call: session required when auth is on.
+  if (authEnabled() && !user) {
+    return NextResponse.json({ error: 'Sign in to use voice input.' }, { status: 401 });
+  }
 
   const form = await req.formData();
   const file = form.get('audio');

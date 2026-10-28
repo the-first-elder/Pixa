@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 import { getRecording } from '@/lib/recordings';
+import { canWrite, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
 import { workerDir } from '@/lib/worker';
 
@@ -16,6 +17,10 @@ export async function POST(
   const { id, seg } = await params;
   const rec = getRecording(id);
   if (!rec) return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(rec, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to reconstruct this segment.' }, { status: user ? 403 : 401 });
+  }
   const segment = rec.manifest?.segments.find((s) => s.id === seg);
   if (!segment) return NextResponse.json({ error: 'Segment not found' }, { status: 404 });
   if (segment.sceneId && segment.status === 'ready') {

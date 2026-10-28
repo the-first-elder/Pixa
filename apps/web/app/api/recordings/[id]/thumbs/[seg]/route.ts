@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getRecording } from '@/lib/recordings';
+import { canRead, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
 
 /**
@@ -14,7 +15,10 @@ export async function GET(
 ) {
   const { id, seg } = await params;
   const rec = getRecording(id);
-  if (!rec) return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!rec || !canRead(rec, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
+  }
   if (!/^seg_[0-9a-z+]+$/i.test(seg)) {
     return NextResponse.json({ error: 'Invalid segment id' }, { status: 400 });
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getJob } from '@/lib/store';
+import { getJob, getScene } from '@/lib/store';
+import { canRead, sessionUser } from '@/lib/authz';
 
 /**
  * GET /api/jobs/:jobId — processing status.
@@ -11,7 +12,12 @@ export async function GET(
 ) {
   const { jobId } = await params;
   const job = getJob(jobId);
-  if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  const user = await sessionUser();
+  // Owner check on the job, falling back to its scene (worker-created jobs
+  // may predate ownership). 404 either way to avoid ID enumeration.
+  const scene = job ? getScene(job.sceneId) : null;
+  const allowed = job != null && (canRead(job, user?.uid ?? null) || (scene != null && canRead(scene, user?.uid ?? null)));
+  if (!allowed || !job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   return NextResponse.json({
     jobId: job.id,
     status: job.status,

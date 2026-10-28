@@ -3,6 +3,7 @@ import CoverageBadge from '@/components/CoverageBadge';
 import JobStatus from '@/components/JobStatus';
 import SceneWorkspace from '@/components/SceneWorkspace';
 import SharePanel from '@/components/SharePanel';
+import { canRead, sessionUser } from '@/lib/authz';
 import { getScene, latestJobForScene } from '@/lib/store';
 
 /**
@@ -19,7 +20,9 @@ export default async function ScenePage({
   const { id } = await params;
   const { v } = await searchParams;
   const scene = getScene(id);
-  if (!scene) notFound();
+  const user = await sessionUser();
+  // Server-side check: no flash of protected content before authorization.
+  if (!scene || !canRead(scene, user?.uid ?? null)) notFound();
   const job = latestJobForScene(id);
 
   return (

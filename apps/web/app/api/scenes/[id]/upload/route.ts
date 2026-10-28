@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STORAGE_DIR } from '@/lib/config';
 import { getScene, updateScene } from '@/lib/store';
+import { canWrite, sessionUser } from '@/lib/authz';
 import { workerDir } from '@/lib/worker';
 
 const MAX_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 500 * 1024 * 1024);
@@ -21,6 +22,10 @@ export async function POST(
   const { id } = await params;
   const scene = getScene(id);
   if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to upload to this scene.' }, { status: user ? 403 : 401 });
+  }
 
   const form = await req.formData();
   const file = form.get('video');

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { openSync, writeSync, closeSync } from 'node:fs';
 import { getSession, markReceived } from '@/lib/uploads';
+import { canWrite, sessionUser } from '@/lib/authz';
 
 /**
  * PUT /api/uploads/:id/chunks/:index — one bounded chunk (raw bytes).
@@ -14,6 +15,10 @@ export async function PUT(
   const { id, index: indexRaw } = await params;
   const s = getSession(id);
   if (!s) return NextResponse.json({ error: 'Upload not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(s, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to resume this upload.' }, { status: user ? 403 : 401 });
+  }
   if (s.status !== 'active') {
     return NextResponse.json({ error: `Upload is ${s.status}, not active` }, { status: 409 });
   }

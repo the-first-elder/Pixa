@@ -37,6 +37,7 @@ export interface Recording {
     segments: Segment[];
   } | null;
   connections: unknown[];
+  ownerId?: string | null;
 }
 
 function load(): Record<string, Recording> {
@@ -59,7 +60,7 @@ function now(): string {
 }
 
 /** Register an upload as a recording (analysis runs detached afterwards). */
-export function createRecording(name: string, videoPath: string): Recording {
+export function createRecording(name: string, videoPath: string, ownerId?: string | null): Recording {
   if (!videoPath.startsWith(STORAGE_DIR)) {
     throw new Error('videoPath must live under the configured storage directory');
   }
@@ -71,6 +72,7 @@ export function createRecording(name: string, videoPath: string): Recording {
     createdAt: now(),
     manifest: null,
     connections: [],
+    ownerId: ownerId ?? null,
   };
   (rec as Recording & { sourceVideo?: string }).sourceVideo = videoPath;
   all[rec.id] = rec;

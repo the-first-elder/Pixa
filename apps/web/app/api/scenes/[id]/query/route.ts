@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getScene } from '@/lib/store';
+import { authEnabled, canRead, sessionUser } from '@/lib/authz';
 import { runQuery } from '@/lib/assistant';
 
 /**
@@ -13,7 +14,15 @@ export async function POST(
 ) {
   const { id } = await params;
   const scene = getScene(id);
-  if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
+  // AI queries cost API money per call: require a session when auth is on,
+  // even for public scenes. Viewer navigation stays free and anonymous.
+  if (authEnabled() && !user) {
+    return NextResponse.json({ error: 'Sign in to ask questions about this scene.' }, { status: 401 });
+  }
 
   let message = '';
   let sessionId: string | undefined;

@@ -5,6 +5,7 @@ import { createReadStream, existsSync, mkdirSync, renameSync, statSync } from 'n
 import { join } from 'node:path';
 import { STORAGE_DIR } from '@/lib/config';
 import { completeSession, getSession } from '@/lib/uploads';
+import { canWrite, sessionUser } from '@/lib/authz';
 import { workerDir } from '@/lib/worker';
 
 /**
@@ -21,6 +22,10 @@ export async function POST(
   const { id } = await params;
   const s = getSession(id);
   if (!s) return NextResponse.json({ error: 'Upload not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(s, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to complete this upload.' }, { status: user ? 403 : 401 });
+  }
   if (s.status !== 'active') {
     return NextResponse.json({ error: `Upload is ${s.status}, not active` }, { status: 409 });
   }

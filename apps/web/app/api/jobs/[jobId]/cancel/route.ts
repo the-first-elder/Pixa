@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { execFileSync } from 'node:child_process';
-import { getJob } from '@/lib/store';
+import { getJob, getScene } from '@/lib/store';
+import { canWrite, sessionUser } from '@/lib/authz';
 import { workerDir } from '@/lib/worker';
 import { STORAGE_DIR } from '@/lib/config';
 
@@ -12,6 +13,12 @@ export async function POST(
   const { jobId } = await params;
   const job = getJob(jobId);
   if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  const user = await sessionUser();
+  const scene = getScene(job.sceneId);
+  const allowed = canWrite(job, user?.uid ?? null) || (scene != null && canWrite(scene, user?.uid ?? null));
+  if (!allowed) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to cancel this job.' }, { status: user ? 403 : 401 });
+  }
   if (job.status === 'ready' || job.status === 'failed') {
     return NextResponse.json({ jobId, status: job.status, note: 'already terminal' });
   }

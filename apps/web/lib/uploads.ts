@@ -27,6 +27,7 @@ export interface UploadSession {
   updatedAt: string;
   tmpPath: string;
   finalPath: string | null;
+  ownerId?: string | null;
 }
 
 export const DEFAULT_CHUNK = 8 * 1024 * 1024;
@@ -66,7 +67,7 @@ function safeExt(filename: string): string {
   return ['mp4', 'mov', 'm4v'].includes(ext) ? `.${ext}` : '.mp4';
 }
 
-export function createSession(input: { filename: string; size: number; mime?: string; chunkSize?: number }): UploadSession {
+export function createSession(input: { filename: string; size: number; mime?: string; chunkSize?: number; ownerId?: string | null }): UploadSession {
   if (!Number.isFinite(input.size) || input.size <= 0) {
     throw new Error('size must be a positive byte count');
   }
@@ -93,6 +94,7 @@ export function createSession(input: { filename: string; size: number; mime?: st
     updatedAt: now(),
     tmpPath: join(dir(), 'uploads-tmp', `${newId('parts')}.part`),
     finalPath: null,
+    ownerId: input.ownerId ?? null,
   };
   mkdirSync(join(dir(), 'uploads-tmp'), { recursive: true });
   // Pre-allocate the temp file so out-of-order writes land at offsets.

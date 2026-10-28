@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createJob, getScene, waitingTrainerCount } from '@/lib/store';
+import { canWrite, sessionUser } from '@/lib/authz';
 import { spawnWorker } from '@/lib/worker';
 
 /** Max queued-behind-trainer jobs. Beyond this, fail fast instead of piling up. */
@@ -17,6 +18,10 @@ export async function POST(
   const { id } = await params;
   const scene = getScene(id);
   if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const user = await sessionUser();
+  if (!canWrite(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to start reconstruction.' }, { status: user ? 403 : 401 });
+  }
   const video = (scene.sourceVideo as { storagePath?: string } | null)?.storagePath;
   if (!video) {
     return NextResponse.json(
@@ -52,7 +57,7 @@ export async function POST(
       { status: 429 },
     );
   }
-  const job = createJob(scene.id, 'reconstruction');
+  const job = createJob(scene.id, 'reconstruction', scene.ownerId ?? user?.uid ?? null);
   const args = ['run-job', job.id, '--video', video, '--backend', backend,
     '--iterations', String(iterations)];
   if (asset) args.push('--asset', asset);

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getScene } from '@/lib/store';
+import { canRead, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
 
 /**
@@ -13,7 +14,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!getScene(id)) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  const scene = getScene(id);
+  const user = await sessionUser();
+  if (!scene || !canRead(scene, user?.uid ?? null)) {
+    return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
+  }
   const path = join(STORAGE_DIR, 'assets', id, 'mesh.glb');
   if (!existsSync(path)) {
     return NextResponse.json({ error: 'No collision mesh for this scene yet' }, { status: 404 });

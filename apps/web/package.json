@@ -9,11 +9,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sparkjsdev/spark": "latest",
     "@pixa/model-adapters": "0.1.0",
     "@pixa/scene-schema": "0.1.0",
     "@pixa/shared-types": "0.1.0",
+    "@sparkjsdev/spark": "latest",
     "next": "latest",
+    "next-auth": "^5.0.0-beta.29",
     "react": "latest",
     "react-dom": "latest",
     "server-only": "latest",
