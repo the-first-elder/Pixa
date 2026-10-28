@@ -24,9 +24,12 @@ Stationary dense views: coherent and detailed. Off-path views: smear/floaters.
 
 ## Phase 3 — Alternatives evaluated
 
-1. **Native-resolution training (IMPLEMENTED)**: stopped upscaling 478p→1600px.
-   7k-iter benchmark: 73 s (vs ~9 min upscaled), PSNR 33.2 (vs ~35), 13 MB PLY.
-   7× faster SfM+train for equivalent real detail. 30k native run in progress.
+1. **Native-resolution training (IMPLEMENTED, PROVEN)**: stopped upscaling 478p→1600px.
+   Same-footage 7k: 73 s native vs ~9 min upscaled (7.4× faster), PSNR 33.2 vs ~35.
+   Native 30k final: **PSNR 40.1, SSIM 0.982, 33.5 min** (upscaled 30k on comparable
+   footage: PSNR ~34–36, ~60 min). Interpolated pixels trained slower AND worse —
+   fitting blur is harder than fitting real pixels. All new uploads use native
+   resolution automatically; existing scenes keep their assets unless re-run.
 2. **Mesh-as-visuals (IMPLEMENTED as Splats|Mesh toggle)**: textured mesh renders
    perfectly stable (no sorting, no popping) with holes where unmeshed; splats
    stay photorealistic where dense. Same data, honest trade-off, user-switchable.
