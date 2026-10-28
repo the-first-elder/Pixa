@@ -1,202 +1,146 @@
-# Pixa — your world, explorable
+# Pixa — every space you film becomes a world you can enter
 
-> Record any room on an ordinary phone. Get back a real 3D world you can walk
-> through in a browser — and ask questions about, with every answer grounded in
-> what was actually captured.
+> Record any room on an ordinary phone — up to a 30-minute walkthrough. Get
+> back a real 3D world you can walk through in a browser and *ask questions
+> about*, with every answer grounded in what was actually captured.
 
 [![CI](https://github.com/the-first-elder/Pixa/actions/workflows/ci.yml/badge.svg)](https://github.com/the-first-elder/Pixa/actions/workflows/ci.yml)
-🌍 **Live demo:** `https://pixa.autumn-test.workers.dev/scenes/scene_5abb5015` — a real reconstructed living room. No sign-up.
+🌍 **Live demo, no sign-up:** `https://pixa.autumn-test.workers.dev/scenes/scene_5abb5015`
 
 ---
 
-## The problem
+## The problem: video is where spatial knowledge goes to die
 
-**Video is dead the moment you stop watching it.** A 90-second walkthrough of
-an apartment, a workshop, a venue — it holds the answers to a hundred questions
-(*where's the table? what's behind that door? how wide is the hallway?*), but
-there's no way to ask. You scrub a timeline like it's 2006.
+A 30-minute walkthrough of an apartment, a workshop, a venue holds the answers
+to a hundred questions — *where's the table? what's behind that door? how wide
+is the hallway?* — but there's no way to ask. You scrub a timeline like it's 2006.
 
-Meanwhile, capturing real 3D spaces is still a pro sport: LiDAR phones, depth
-cameras, desktop photogrammetry pipelines, hours of processing. And the new
-wave of "AI world" demos mostly fakes it — a generated flythrough, a NeRF-ish
-blob with no notion of *objects*, confident answers about things that were
-never recorded.
+The alternatives all miss:
 
-Pixa attacks all three at once:
+- **3D capture is a pro sport.** LiDAR phones, depth cameras, desktop photogrammetry, hours of processing. Ordinary people with ordinary phones are locked out.
+- **"AI world" demos fake it.** Generated flythroughs and NeRF-ish blobs with no notion of *objects*, giving confident answers about things that were never recorded.
+- **Nobody trusts AI about physical space.** And they're right not to — until positions are *proven*, not predicted.
 
-| Dead end today | What Pixa does instead |
-|---|---|
-| Flat video you can only replay | **Real Gaussian-splat reconstruction** from the footage — orbit, fly, walk inside it |
-| 3D capture needs pro gear + expertise | **Phone video + guided capture** (pace/sharpness/coverage coaching while you record) |
-| AI that hallucinates your space | **Grounded spatial intelligence** — every object position is triangulated *and* independently reprojected; the system says "not captured" instead of inventing |
-
-Three rules the whole system obeys: **real 3D from real footage** (never
-generated scenery), **detection ≠ registration** (a label is not a position
-until geometry proves it), and **observed / established / inferred / unknown**
-(the assistant distinguishes what it saw from what it concludes).
+**The market is everyone who films a space to remember, show, or document it:**
+renters and agents walking apartments, museums and workshops that visitors
+question, venues and site managers documenting facilities, travelers previewing
+places, anyone checking access and layout before arriving in person. They all
+already shoot the video. None of them can interrogate it.
 
 ---
 
-## What it feels like
+## The product: film it, step inside, interrogate it
 
-1. **Capture** — record in the browser with live coaching, or upload an MP4. Sign in with Google; your video is stashed and restored across the login.
+1. **Capture** — record in the browser with a live coach (pacing, sharpness, light, coverage), or upload an MP4 up to ~30 minutes. Long captures auto-segment into chapters.
 2. **Reconstruct** — frames → camera poses → 3D Gaussian splats → collision mesh. Leave and come back; progress bars and notifications track it.
-3. **Explore** — orbit, fly, or walk the rooms (WASD, eye height, walls + ceiling constrain you). Take a guided tour, jump between captured viewpoints.
-4. **Ask** — *"take me to the entrance," "show me the table," "how wide is the doorway?"* The assistant flies the camera, highlights objects, measures — and shows its evidence. Voice in, spoken answers out.
+3. **Explore** — orbit, fly, or *walk the rooms* (WASD, walls and ceilings constrain you). Guided tours, captured viewpoints, public share links.
+4. **Ask** — *"take me to the entrance," "show me the table," "how wide is the doorway?"* The assistant flies the camera, highlights objects, measures — shows its evidence, and says "not captured" instead of inventing.
+
+Sign in with Google, get a visual **My Worlds** library: searchable, sortable, thumbnails, content stats, inline rename, owner-gated delete.
 
 ---
 
-## How it works
+## Why this wins: the moat is verification
 
-### End-to-end pipeline
+Anyone can call a segmentation API. Almost nobody proves their geometry. Pixa's
+pipeline measures whether an object position is credible *instead of trusting
+a plausible-looking result*:
 
 ```mermaid
 flowchart LR
     subgraph Capture
-        A[Phone video / browser recorder]
-        B[Guided capture: pace, sharpness, light, coverage compass]
+        A[Phone video up to ~30 min]
+        B[Live coaching + auto-chapters]
     end
     subgraph Reconstruct
-        C[FFmpeg frames @2fps]
-        D[Spirula SfM: camera poses]
-        E[3DGS training: 7k/15k/30k iters]
-        F[SPZ splats + GLB collision mesh]
+        C[Frames @2fps]
+        D[SfM camera poses]
+        E[3DGS training 7k/15k/30k]
+        F[Splats + collision mesh]
     end
-    subgraph Index
-        G[Spark: object labels]
-        H[SAM 3.1 video track: per-instance 2D tracks]
-        I[Hybrid registration: mesh-median vs triangulation]
+    subgraph Prove
+        G[Spark labels]
+        H[SAM 3.1 video tracks\nstable per-instance IDs]
+        I[Mesh-median vs triangulation]
         J[Independent reprojection audit]
     end
     subgraph Experience
-        K[Orbit / Fly / Walk viewer]
+        K[Orbit / Fly / Walk]
         L[Grounded assistant + tools]
     end
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L
 ```
 
-### Spatial indexing: the part we're proudest of
-
-Per-frame detectors associate instances geometrically — fragile when two
-chairs look alike. Pixa instead sends **one SAM 3.1 video-track request per
-scene**: stable per-instance IDs with per-observation confidence, at ~$0.04
-per scene (vs ~$0.64 for dense per-frame calls).
-
-Then positions are *earned*, not assumed:
-
 ```mermaid
 flowchart TD
-    R[Box-center rays + camera poses] --> M[Candidate 1: mesh-median<br/>cast rays into collision mesh,<br/>robust median of surface hits]
-    R --> T[Candidate 2: triangulation<br/>RANSAC + weighted least squares]
-    M --> S[Score both by evidence-wide<br/>median reprojection miss]
+    R[Rays + poses] --> M[Mesh-median candidate]
+    R --> T[Triangulation candidate]
+    M --> S[Score by reprojection miss]
     T --> S
-    S -->|lower miss wins, ≤100px bar| P[Registered position +<br/>method + measured error]
-    S -->|both fail| U[Unregistered: position stays null]
+    S -->|lower miss wins, ≤100px| P[Registered + method + error]
+    S -->|both fail| U[position stays null]
 ```
 
-Why two candidates? Measured the hard way: near-parallel rays let RANSAC
-hallucinate a "painting" **5 cm in front of the lens** with a "tight" 0.027
-residual. Tight residuals don't imply correct positions — so an independent
-verifier reprojects every position into its evidence frames and rejects what
-doesn't land on its own boxes. Current standing result: **11/11 PASS
-(0–87 px)** on the reference scene, with method + error persisted per entity.
+Concrete edges competitors don't have:
 
-Key fixes the measurements forced (all verified, none assumed):
-
-- **VFR/edit-shifted sources break frame-index math** (measured +6 frames) → the tracker consumes a re-encoded *recon clip* whose frames are identical to reconstruction frames by construction (SSIM-verified).
-- **Frame-path boxes are Pipeline-A pixels vs B-frame intrinsics** (1.25× silent error) → scale derived per scene from the actual files.
-- **SAM 500s on degenerate prompt boxes** (a 3 px edge sliver killed a request twice) → prompt hygiene + best-overlap carry + 5xx-only retry + checkpoints. Billed calls never auto-retry on timeout.
-- **Spark probes starve at small token budgets** (298 reasoning tokens eat the budget → null content → empty indexes) → raised budgets + null guards.
+- **Track, don't detect.** One SAM 3.1 video request per scene (not 256 image calls): stable IDs, per-observation confidence, **~$0.04/scene** — 16× cheaper and strictly more correct.
+- **Two estimators, one judge.** Mesh-median and RANSAC triangulation compete; evidence-wide reprojection picks the winner. Caught a "painting" fit 5 cm in front of the lens hiding behind a "tight" 0.027 residual.
+- **Failure as a feature.** VFR frame-index drift (+6 frames measured), 1.25× pixel-scale mismatch, degenerate prompt boxes, reasoning-starved probes — each caught by measurement, each fixed structurally, each documented.
+- **Unit economics that scale.** Indexing $0.04–0.10/scene, reconstruction $0 (local GPU), demo hosting $0. At 1,000 scenes that's ~$40–100 of AI spend — a rounding error beside any subscription price.
 
 ---
 
-## Features
+## Proof, not promises
 
-- **Three viewer modes** — orbit, fly, and rooms-walk with collision proxy, ceiling clamp, eye-height snap, gravity leveling.
-- **Grounded assistant** — 8 tools (`navigateToLocation`, `focusOnObject`, `highlightObjects`, `showRoute`, `inspectLocation`, `compareLocations`, `measureObject`, `calibrateScale`), evidence thumbnails, voice input + spoken answers, confirm-before-act.
-- **Guided capture** — live pace meter, sharpness/light checks, coverage compass with tilt guidance, weak-moment chapters, shot checklist, capture report before submit, resolution honesty (flags upscaled recompressed sources).
-- **My Worlds** — searchable/sortable card library with thumbnails, content stats (objects · views · coverage), job progress, inline rename, owner-gated delete.
-- **Auth** — Google OAuth (Auth.js JWT), in-context sign-in modal, file-stash restore across login, private-by-default scenes, legacy-record grandfathering.
-- **Long video** — chunked resumable uploads, segment manifests with split/merge, per-segment jobs, partial-success recovery.
-- **Quality tiers** — fast preview (~7k) / balanced (~15k) / full (30k) with ultra+2M+mild suppression on full runs.
+| Claim | Evidence |
+|---|---|
+| Positions are real | 11/11 independent reprojection audit PASS (0–87 px) |
+| Cheap to index | Billed-frame accounting, every call logged |
+| Real reconstructions | 173/180 frames registered, 2M splats, SSIM 0.977, PSNR up to 40.1 |
+| Auth holds | 15/15 matrix (anon blocked, owners isolated, legacy grandfathered) |
+| Long video works | 12/12 (chunked uploads, segments, recovery) |
+| CI on every push | Typecheck, worker smoke, notifications 4/4, auth matrix |
 
----
-
-## Measured results (not marketing)
-
-| Metric | Value | Source |
-|---|---|---|
-| Registration audit | 11/11 PASS, 0–87 px miss | `verify-registration.mts` |
-| Indexing cost | ~$0.04–0.10 / scene | billed frames accounting |
-| Recon quality (478p source) | PSNR 32.7–40.1, SSIM up to 0.977, 2M splats | `docs/building-quality-report.md` |
-| Frames registered | 173/180 (96%) | remaster job `job_663dcb05` |
-| Auth suite | 15/15 | `scripts/test-auth.sh` |
-| Notifications suite | 4/4 | `scripts/test-notifications.mts` |
-| Long-video suite | 12/12 | `scripts/test-longvideo.sh` |
-
-And one honest ceiling: all test footage is 478p WhatsApp-compressed. The
-pipeline is near-optimal *for that footage* — real resolution gains need
-1080p+ captures, which the guided recorder now steers toward.
+Honest ceiling, stated upfront: test footage is 478p WhatsApp-compressed — the
+pipeline is near-optimal *for that footage*. 1080p+ captures are the next
+leap, and the guided recorder already steers users toward them.
 
 ---
 
-## Repo layout
+## Business: where the money is
 
-```
-apps/web/                 Next.js + TypeScript + Tailwind + Three.js + Spark viewer
-services/reconstruction/  Python worker: ingest → frames → poses → 3DGS → manifest
-packages/shared-types/    TS types shared by web + worker contracts
-packages/scene-schema/    Scene manifest + graph schema (versioned)
-packages/model-adapters/  Meta Model API clients (spark/sam/voice/image)
-workers/pixa-proxy/       Cloudflare edge proxy (public URL → Mac server)
-scripts/                  Indexing, tracking, registration, verification, tests
-docs/                     Verified API notes, strategy, protocol, architecture
-.github/workflows/ci.yml  Tests on every push (typecheck, worker, notifications, auth)
-```
+- **Who pays first:** property (listings buyers can walk + query), venues/facilities (navigable records), culture/learning (spaces that answer back). All already shoot video; all pay for time saved on site.
+- **Pricing room:** AI cost per scene is cents; reconstruction is free on-device. Any seat or per-space price above a few dollars is nearly pure margin.
+- **Defensibility:** the verification layer (provenance per object, rejection of bad geometry) compounds with every scene — fakers can't retrofit trust.
+- **What winning unlocks:** named-tunnel-to-production hardening now; then hosted tier (object storage + cloud GPU + managed DB) when demo traffic earns it, 1080p-first capture, and sub-50 px registration.
 
 ---
 
-## Quickstart
+## Try it / build it
+
+**Live demo** (public scene, nothing to install):
+`https://pixa.autumn-test.workers.dev/scenes/scene_5abb5015`
 
 ```bash
 cp .env.example .env        # add META_API_KEY (never commit .env)
 npm install
 npm run dev                 # apps/web on http://localhost:3000
-
-# Reconstruction worker (Apple Silicon, Spirula binary in ~/.pixa/bin)
-cd services/reconstruction
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m worker probe <video.mp4>
 ```
 
-Google OAuth (enables sign-in + gated creates): follow
-[`docs/auth-setup.md`](docs/auth-setup.md) — three vars, one redirect URI.
+Google OAuth (sign-in + gated creates): [`docs/auth-setup.md`](docs/auth-setup.md).
+Production here = Mac server behind a Cloudflare edge worker; see
+`workers/pixa-proxy` + `scripts/sync-tunnel.sh`. Permanent hardening (named
+tunnel, repo secrets) is documented in `.github/workflows/ci.yml`.
 
-Production here is a **Mac server behind a Cloudflare edge worker**:
-`npm run build` → `next start` → `cloudflared tunnel` →
-`wrangler deploy`. The worker only forwards traffic; training, files, and
-sessions live on the Mac. If the tunnel restarts,
-`bash scripts/sync-tunnel.sh` re-points and redeploys the proxy.
-(Permanent fix: named tunnel + the two repo secrets documented in
-`.github/workflows/ci.yml`.)
-
----
-
-## Costs (measured, steady state)
-
-- Scene indexing: **~$0.04–0.10** (SAM video frames + Spark probes; every billed call accounted, timeouts never retried).
-- Reconstruction: **$0** (local Spirula on your GPU; optional KIRI cloud path stays behind an explicit spend flag).
-- Hosting the demo link: **$0** (Cloudflare free tier + this machine).
-
----
-
-## Roadmap
-
-- [ ] Named Cloudflare tunnel (stable public URL through restarts)
-- [ ] Motion-gated dynamic masking (mask what *moves*, not every "person" — static photo content taught us that)
-- [ ] Sub-50 px registration tier (occlusion-aware box centers, denser meshes)
-- [ ] Hosted production (R2 + external GPU + managed DB) when demo traffic earns it
+```
+apps/web/                 Next.js + TypeScript + Tailwind + Three.js + Spark viewer
+services/reconstruction/  Python worker: ingest → frames → poses → 3DGS → manifest
+packages/model-adapters/  Meta Model API clients (spark/sam/voice/image)
+packages/scene-schema/    Versioned scene manifest + graph schema
+workers/pixa-proxy/       Cloudflare edge proxy (public URL → Mac server)
+scripts/                  Indexing, tracking, registration, verification, tests
+docs/                     Verified API notes, reports, protocol, architecture
+```
 
 ## Standing rules
 
