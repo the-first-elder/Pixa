@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { stashFile } from '@/lib/file-stash';
 import { useEffect, useRef, useState } from 'react';
 import { blurScore, brightness, frameDiff, GuideEngine } from '@/lib/capture-analysis';
 import { buildReport, type CaptureReport, type MetricSample } from '@/lib/capture-report';
@@ -396,6 +397,17 @@ export default function CaptureRecorder() {
           name: pass > 1 ? `Guided capture ${new Date().toLocaleString()} (pass ${pass})` : `Guided capture ${new Date().toLocaleString()}`,
         }),
       });
+      if (createRes.status === 401) {
+        setPhase('review');
+        const file = new File([blob], `capture.${ext}`, { type: blob.type });
+        const ok = await stashFile('capture-pending', file);
+        if (!ok) {
+          setError('Please sign in, then select your video again.');
+          return;
+        }
+        router.push('/signin?callbackUrl=/capture');
+        return;
+      }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
       const form = new FormData();

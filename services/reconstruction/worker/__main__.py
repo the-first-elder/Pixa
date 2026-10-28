@@ -60,9 +60,10 @@ def execute_job(job_id: str, video: str, backend_name: str,
     try:
         handle = backend.submit(job, ctx)
     except RuntimeError as e:
-        msg, code = str(e), str(e).split(":")[0]
+        msg = str(e)
         return store.transition(job_id, "failed", progress=None,
-                                errorCode=code, errorMessage=msg)
+                                errorCode=store.error_code(msg, "SUBMIT_FAILED"),
+                                errorMessage=msg[:500])
     if hasattr(backend, "run"):
         return backend.run(job_id, handle)  # type: ignore[attr-defined]
     # Async backends (kiri/runpod): handle persisted for polling.

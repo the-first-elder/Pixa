@@ -1,8 +1,9 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ChunkedUpload, { BIG_FILE } from '@/components/ChunkedUpload';
+import { stashFile, unstashFile } from '@/lib/file-stash';
 
 /**
  * Capture flow (PRD §6.2): name → select video → create scene → upload with
@@ -22,6 +23,34 @@ export default function UploadForm() {
   const iterations = quality === 'full' ? 30000 : quality === 'balanced' ? 15000 : 7000;
   const [error, setError] = useState<string | null>(null);
   const [bigFile, setBigFile] = useState<File | null>(null);
+  const [restored, setRestored] = useState(false);
+
+  // After a sign-in redirect, restore the stashed file (one-shot).
+  useEffect(() => {
+    let cancelled = false;
+    unstashFile('capture-pending').then((file) => {
+      if (cancelled || !file || !fileRef.current) return;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      fileRef.current.files = dt.files;
+      if (file.size > BIG_FILE) setBigFile(file);
+      setRestored(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Stash the file, then send the user to sign in (returns here after). */
+  async function sendToSignIn(file: File) {
+    const ok = await stashFile('capture-pending', file);
+    if (!ok) {
+      setError('Please sign in, then select your video again.');
+      setPhase('error');
+      return;
+    }
+    router.push('/signin?callbackUrl=/capture');
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +68,11 @@ export default function UploadForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim() || 'Untitled scene' }),
       });
+      if (createRes.status === 401) {
+        setPhase('idle');
+        await sendToSignIn(file);
+        return;
+      }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
 
@@ -114,6 +148,11 @@ export default function UploadForm() {
       </div>
       {bigFile && (
         <ChunkedUpload key={bigFile.name + bigFile.size} file={bigFile} name={name} />
+      )}
+      {restored && (
+        <p className="rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
+          Your selected video was restored after signing in — press Upload and reconstruct to continue.
+        </p>
       )}
       {phase === 'uploading' && (
         <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">

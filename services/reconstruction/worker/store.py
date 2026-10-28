@@ -55,6 +55,24 @@ def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+_CODE_RE = None
+
+
+def error_code(raw: str, fallback: str = "BACKEND_FAILED") -> str:
+    """Sanitize an error code: short SCREAMING token only, never a sentence.
+
+    User-facing surfaces (worlds cards, notifications) render errorCode, so it
+    must never contain paths or prose. Anything that fails the shape check
+    becomes the fallback; the full message stays in errorMessage (dev-only).
+    """
+    global _CODE_RE
+    if _CODE_RE is None:
+        import re as _re
+        _CODE_RE = _re.compile(r"^[A-Z][A-Z0-9_]{1,31}$")
+    candidate = (raw or "").split(":")[0].strip()
+    return candidate if _CODE_RE.match(candidate) else fallback
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 

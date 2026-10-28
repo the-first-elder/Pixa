@@ -18,6 +18,12 @@ export async function GET(
   const scene = job ? getScene(job.sceneId) : null;
   const allowed = job != null && (canRead(job, user?.uid ?? null) || (scene != null && canRead(scene, user?.uid ?? null)));
   if (!allowed || !job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  // Opportunistic notification sweep: a returning user polling a finished
+  // job gets its completion notification created (idempotent).
+  if (user) {
+    const { ensureNotifications } = await import('@/lib/notifications');
+    ensureNotifications(user.uid);
+  }
   return NextResponse.json({
     jobId: job.id,
     status: job.status,

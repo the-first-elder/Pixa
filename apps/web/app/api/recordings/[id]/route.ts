@@ -13,5 +13,9 @@ export async function GET(
   if (!rec || !canRead(rec, user?.uid ?? null)) {
     return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
   }
+  if (user) {
+    const { ensureNotifications } = await import('@/lib/notifications');
+    ensureNotifications(user.uid);
+  }
   return NextResponse.json({ ...rec, computedStatus: recordingStatus(rec) });
 }

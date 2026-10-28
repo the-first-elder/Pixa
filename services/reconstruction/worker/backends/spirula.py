@@ -492,7 +492,7 @@ class SpirulaBackend:
             code = "SPIRULA_FAILED"
             for prefix in ("SPIRULA_", "NO_", "COVERAGE_", "TRAINING_", "STALL_"):
                 if msg.startswith(prefix):
-                    code = msg.split(":")[0]
+                    code = store.error_code(msg, "SPIRULA_FAILED")
                     break
             mark("FAILED", msg)
             return store.transition(job_id, "failed", progress=None,

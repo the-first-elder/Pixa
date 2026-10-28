@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
+import { stashFile } from '@/lib/file-stash';
 
 const CHUNK = 8 * 1024 * 1024;
 const BIG_FILE = 50 * 1024 * 1024;
@@ -33,6 +34,16 @@ export default function ChunkedUpload({ file, name }: { file: File; name: string
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: file.name, size: file.size, mime: file.type, chunkSize: CHUNK }),
         });
+        if (create.status === 401) {
+          setPhase('idle');
+          const ok = await stashFile('capture-pending', file);
+          if (!ok) {
+            setError('Please sign in, then select your video again.');
+            return { paused: false as const, uploadId: undefined as string | undefined };
+          }
+          router.push('/signin?callbackUrl=/capture');
+          return { paused: false as const, uploadId: undefined as string | undefined };
+        }
         if (!create.ok) {
           const body = (await create.json().catch(() => null)) as { error?: string } | null;
           throw new Error(body?.error ?? `Upload session failed (${create.status})`);
