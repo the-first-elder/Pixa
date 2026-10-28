@@ -56,6 +56,19 @@ export default function CaptureRecorder() {
 
   async function startPreview(deviceId?: string) {
     setError(null);
+    // Fail fast with the true cause: no mediaDevices usually means an
+    // insecure context (e.g. opened via http://<lan-ip>:3000 from a phone).
+    // Cameras require localhost or HTTPS — permission alone is not enough.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError(
+        'This page cannot access any camera (camera API unavailable). ' +
+          'Most likely cause: you opened the app over plain HTTP from another device. ' +
+          'Use http://localhost:3000 on this machine, or serve over HTTPS. ' +
+          'Otherwise upload a file instead.',
+      );
+      setPhase('error');
+      return;
+    }
     try {
       // Labels are empty until permission is granted once; list before/after.
       let cams = await listCameras();
@@ -109,13 +122,33 @@ export default function CaptureRecorder() {
       setAdvice([{ level: 'good', message: 'Camera live. Tap Record, then walk slowly around one room.' }]);
     } catch (e) {
       stopStream();
-      setError(
-        e instanceof Error && e.message === 'timeout'
-          ? 'Camera opened but delivered no frames. Try another camera below, another browser, or HTTPS/localhost.'
-          : 'Camera unavailable. Check browser permissions, or upload a file instead.',
-      );
+      setError(cameraErrorMessage(e));
       setPhase('error');
     }
+  }
+
+  /** Map getUserMedia failures to actionable messages (names, not guesses). */
+  function cameraErrorMessage(e: unknown): string {
+    const name = e instanceof DOMException ? e.name : e instanceof Error ? e.message : '';
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      return 'Camera permission was denied for this page. Allow it in the browser site settings, then try again — or upload a file instead.';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return 'No camera device was found. If one exists, another app may hold it — or upload a file instead.';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return 'The camera is busy or failed to start (often another app or tab holds it). Close other camera apps and retry — or upload a file.';
+    }
+    if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+      return 'The requested camera mode is not supported by this device. Try another camera below, or upload a file.';
+    }
+    if (name === 'SecurityError') {
+      return 'Blocked for security: camera needs localhost or HTTPS. Reopen via http://localhost:3000 or HTTPS — or upload a file.';
+    }
+    if (name === 'timeout') {
+      return 'Camera opened but delivered no frames. Try another camera below, another browser, or HTTPS/localhost.';
+    }
+    return 'Camera unavailable. Check browser permissions, or upload a file instead.';
   }
 
   function analyzeLoop() {
