@@ -66,11 +66,12 @@ export default function CaptureRecorder() {
         cams = await listCameras();
       }
       setCameras(cams);
-      const picked =
-        (deviceId ?? cameraId) ||
-        cams.find((c) => /back|rear|environment/i.test(c.label))?.id ??
-        cams[0]?.id ??
+      const explicit = deviceId ?? cameraId;
+      const preferred =
+        explicit ||
+        cams.find((c) => /back|rear|environment/i.test(c.label))?.id ||
         '';
+      const picked = preferred !== '' ? preferred : (cams[0]?.id ?? '');
       if (picked) setCameraId(picked);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: picked
