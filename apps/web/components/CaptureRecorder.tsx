@@ -67,8 +67,7 @@ export default function CaptureRecorder() {
       }
       setCameras(cams);
       const picked =
-        deviceId ??
-        cameraId ||
+        (deviceId ?? cameraId) ||
         cams.find((c) => /back|rear|environment/i.test(c.label))?.id ??
         cams[0]?.id ??
         '';
@@ -245,7 +244,7 @@ export default function CaptureRecorder() {
       {phase === 'idle' && (
         <button
           type="button"
-          onClick={startPreview}
+          onClick={() => startPreview()}
           className="mt-3 rounded-md bg-white px-4 py-2 text-sm font-medium text-black"
         >
           Open camera
