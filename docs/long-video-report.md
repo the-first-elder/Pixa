@@ -1,5 +1,43 @@
 # Long-video ingestion: implementation + validation report
 
+## Quality benchmark (2026-10-28, same footage throughout: tester3.mp4, 46 s, 478p)
+
+| config | frames | registered | reproj | PSNR / SSIM | train time | workdir |
+|---|---|---|---|---|---|---|
+| 1 fps, 7k | 46 | 100% | 0.54 px | 33.2 / 0.953 | ~1.5 min | 42 MB |
+| 3 fps, 7k | 139 | 100% | 0.80 px | 33.4 / 0.928 | ~1.5 min | 99 MB |
+| 2 fps, 15k | 93 | 87% | 0.71 px | 35.6 / 0.967 | ~6 min | 258 MB |
+| 2 fps, 30k | 93 | 86% | 1.06 px | 37.9 / 0.962 | ~58 min | — |
+
+Dimensions evaluated separately:
+- **Registration/completeness**: varies run to run (86–100% on identical footage)
+  more than it varies with fps. Gaps, not density, drive unusable regions.
+- **Visual (PSNR)**: responds to iterations (+2 per doubling, 4–10× cost), not
+  to fps (33.2 vs 33.4 at fixed 7k). Novel-view coherence is coverage-driven;
+  verified earlier by same-viewpoint still-vs-motion tests.
+- **Geometric (reproj)**: 0.54–1.06 px across configs — all geometrically sound.
+- **Resources**: workdir scales with frames × iterations; 14 GB free constrains
+  parallel/long jobs — sequential default stands.
+
+### Resolution comparison: BLOCKED on footage
+All recordings are 478p; no 1080p/4K source exists, and upscaling proves nothing.
+Preprocessing verified in code: native resolution preserved, downscale-only cap
+at 1600px (`media.py` extract). A same-room 1080p + 4K pair is needed from the
+owner to run this comparison honestly.
+
+### Longest proven
+Analysis+segmentation to 12.7 min; reconstruction segments ≤ ~70 s and single
+scenes to 94 s. 10–30 min full reconstruction: not run (hours of GPU + GBs disk
+per segment on this hardware).
+
+### Single highest-impact recommendation
+**Registration-robustness retry**: on partial registration, automatically retry
+SfM with alternate frame sampling (phase-shifted extraction) before failing —
+registration completeness, not fps or iterations, is the top demonstrated
+quality failure mode (86% vs 100% swings on identical footage; gaps become
+smear). Cheap (SfM takes seconds–minutes), local, no new dependencies.
+Capture density remains the visual ceiling no pipeline change can lift.
+
 ## Validation (2026-10-28, all measured — no fabricated numbers)
 
 ### Footage available

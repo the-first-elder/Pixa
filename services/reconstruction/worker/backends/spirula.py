@@ -384,9 +384,15 @@ class SpirulaBackend:
         sfm_args = ctx.get("sfmArgs") or [
             "--data-type", "video", "--pairs", "sequential", "--sequence", ".",
         ]
+        fps = ctx.get("fps")
+        if fps is not None:
+            fps = float(fps)
+            if not (0.25 <= fps <= 10):
+                raise SpirulaError(f"extract fps {fps} out of sane range 0.25..10")
         return {"workdir": workdir, "video": video,
                 "iterations": int(ctx.get("iterations", 30000)),
                 "allowPartial": bool(ctx.get("allowPartial", False)),
+                "fps": fps,
                 "sfmArgs": list(sfm_args)}
 
     def status(self, handle: dict[str, Any]):
@@ -413,7 +419,8 @@ class SpirulaBackend:
 
         try:
             store.transition(job_id, "extracting_frames", progress=10)
-            frames_b = media.extract_frames(handle["video"], images, "B")
+            frames_b = media.extract_frames(handle["video"], images, "B",
+                                            handle.get("fps"))
             if frames_b["count"] < 8:
                 raise SpirulaError(
                     f"Only {frames_b['count']} reconstruction frames extracted; "

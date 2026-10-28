@@ -44,7 +44,8 @@ def execute_job(job_id: str, video: str, backend_name: str,
                 asset: str | None = None, poses: str | None = None,
                 allow_spend: bool = False, iterations: int = 30000,
                 sfm_args: list[str] | None = None,
-                allow_partial: bool = False) -> dict[str, Any]:
+                allow_partial: bool = False,
+                fps: float | None = None) -> dict[str, Any]:
     """Run the pipeline for an EXISTING job record. Shared by `process` and `run-job`."""
     backend_cls = BACKENDS.get(backend_name)
     if backend_cls is None:
@@ -55,7 +56,7 @@ def execute_job(job_id: str, video: str, backend_name: str,
     job = store.get_job(job_id)
     ctx = {"video": video, "asset": asset, "poses": poses, "job": job,
            "allowSpend": allow_spend, "iterations": iterations,
-           "sfmArgs": sfm_args, "allowPartial": allow_partial}
+           "sfmArgs": sfm_args, "allowPartial": allow_partial, "fps": fps}
     try:
         handle = backend.submit(job, ctx)
     except RuntimeError as e:
@@ -164,7 +165,7 @@ def cmd_process(args: argparse.Namespace) -> int:
     job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
                       allow_spend=args.allow_spend, iterations=args.iterations,
                       sfm_args=shlex.split(args.sfm_args) if args.sfm_args else None,
-                      allow_partial=args.allow_partial)
+                      allow_partial=args.allow_partial, fps=args.fps)
     if args.backend in ("kiri", "runpod") and job["status"] == "queued":
         print(json.dumps({"jobId": job["id"], "status": "submitted, poll for completion"}))
         return 0
@@ -182,7 +183,7 @@ def cmd_run_job(args: argparse.Namespace) -> int:
     job = execute_job(job["id"], args.video, args.backend, args.asset, args.poses,
                       allow_spend=args.allow_spend, iterations=args.iterations,
                       sfm_args=shlex.split(args.sfm_args) if args.sfm_args else None,
-                      allow_partial=args.allow_partial)
+                      allow_partial=args.allow_partial, fps=args.fps)
     print(json.dumps({"jobId": job["id"], "status": job["status"]}))
     return 0 if job["status"] == "ready" else 1
 
@@ -442,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Extra/override args for 'spirula sfm auto', quoted string")
     r.add_argument("--allow-partial", action="store_true",
                    help="Train the largest connected component when coverage is incomplete (labeled partial)")
+    r.add_argument("--fps", type=float, default=None,
+                   help="Override reconstruction frame rate (default 2)")
     r.set_defaults(fn=cmd_process)
     u = sub.add_parser("run-job", help="Run pipeline for an existing job record")
     u.add_argument("job_id")
@@ -457,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Extra/override args for 'spirula sfm auto', quoted string")
     u.add_argument("--allow-partial", action="store_true",
                    help="Train the largest connected component when coverage is incomplete (labeled partial)")
+    u.add_argument("--fps", type=float, default=None,
+                   help="Override reconstruction frame rate (default 2)")
     u.set_defaults(fn=cmd_run_job)
     w = sub.add_parser("poll", help="Poll an async backend job; fetch asset when done")
     w.add_argument("job_id")
