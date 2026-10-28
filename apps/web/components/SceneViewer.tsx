@@ -548,14 +548,18 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
   return (
     <div ref={mountRef} className="relative h-full min-h-96 w-full bg-black">
       {status !== 'ready' && (
-        <div className="absolute inset-0 flex items-center justify-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
           <p className="px-6 text-center text-sm text-neutral-500">
             {status === 'loading-manifest' && 'Loading scene…'}
             {status === 'loading-asset' && 'Loading 3D asset…'}
-            {status === 'empty' &&
-              'No reconstructed scene yet. Upload a video and run reconstruction first.'}
+            {status === 'empty' && 'Reconstruction in progress — follow the timer above.'}
             {status === 'error' && `Viewer error: ${detail}`}
           </p>
+          {status === 'empty' && (
+            <div className="h-1.5 w-40 overflow-hidden rounded-full bg-neutral-800">
+              <div className="h-full w-1/3 animate-pulse bg-white/70" />
+            </div>
+          )}
         </div>
       )}
       {status === 'ready' && (

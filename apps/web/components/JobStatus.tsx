@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface JobState {
   jobId: string;
@@ -9,12 +9,27 @@ interface JobState {
   errorCode?: string;
   errorMessage?: string;
   waitingForTrainer?: boolean;
+  startedAt?: string;
+}
+
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0
+    ? `${h}h ${m}m`
+    : m > 0
+      ? `${m}m ${String(sec).padStart(2, '0')}s`
+      : `${sec}s`;
 }
 
 /** Polls GET /api/jobs/:jobId until a terminal state. Survives refresh (server-side job records). */
-export default function JobStatus({ jobId }: { jobId: string }) {
+export default function JobStatus({ jobId, startedAt }: { jobId: string; startedAt?: string }) {
   const [job, setJob] = useState<JobState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number | null>(startedAt ? new Date(startedAt).getTime() : null);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,7 +39,12 @@ export default function JobStatus({ jobId }: { jobId: string }) {
         const res = await fetch(`/api/jobs/${jobId}`);
         if (!res.ok) throw new Error(`Job lookup failed (${res.status})`);
         const data = (await res.json()) as JobState;
-        if (!cancelled) setJob(data);
+        if (!cancelled) {
+          setJob(data);
+          if (!startRef.current && (data as JobState & { startedAt?: string }).startedAt) {
+            startRef.current = new Date((data as JobState & { startedAt?: string }).startedAt as string).getTime();
+          }
+        }
         if (data.status === 'ready' && !reloaded) {
           // The viewer mounted before the asset existed — reload once so the
           // manifest, viewer, and panels pick up the finished reconstruction.
@@ -50,6 +70,18 @@ export default function JobStatus({ jobId }: { jobId: string }) {
   if (error) return <p className="text-sm text-red-400">Status error: {error}</p>;
   if (!job) return <p className="text-sm text-neutral-500">Loading job status…</p>;
   const active = job.status !== 'ready' && job.status !== 'failed';
+  const startMs = startRef.current ?? (job.startedAt ? new Date(job.startedAt).getTime() : null);
+  if (startRef.current === null && startMs !== null) startRef.current = startMs;
+
+  // Ticking elapsed timer while the job is active.
+  useEffect(() => {
+    if (!active) return;
+    setElapsed(startRef.current ? Date.now() - startRef.current : 0);
+    const t = window.setInterval(() => {
+      if (startRef.current) setElapsed(Date.now() - startRef.current);
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [active, jobId]);
 
   async function cancel() {
     try {
@@ -67,6 +99,11 @@ export default function JobStatus({ jobId }: { jobId: string }) {
         <span className="text-neutral-400">Job {job.jobId}</span>
         <span className="flex items-center gap-2">
           <span className="font-medium">{job.status}</span>
+          {active && startRef.current && (
+            <span className="text-xs tabular-nums text-neutral-500" title="Elapsed processing time">
+              {fmtElapsed(elapsed)}
+            </span>
+          )}
           {active && (
             <button
               type="button"
