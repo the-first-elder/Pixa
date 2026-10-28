@@ -1,5 +1,11 @@
 import Link from 'next/link';
 import AuthNav from '@/components/AuthNav';
+
+/**
+ * Auth-aware per request — never prerendered. Same static-bake hazard as
+ * /worlds: a credential-less build would freeze the signed-out banner.
+ */
+export const dynamic = 'force-dynamic';
 import CaptureRecorder from '@/components/CaptureRecorder';
 import SignInButton from '@/components/SignInButton';
 import { authEnabled, sessionUser } from '@/lib/authz';

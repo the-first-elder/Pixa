@@ -1,6 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import AuthNav from '@/components/AuthNav';
+
+/**
+ * Auth-gated per request — never prerendered. Without this, a build made
+ * without credentials (e.g. CI) would bake the signed-out/single-user HTML
+ * as static and serve 200 instead of redirecting (measured CI failure).
+ */
+export const dynamic = 'force-dynamic';
 import NotificationsPanel from '@/components/NotificationsPanel';
 import SceneGrid from '@/components/SceneGrid';
 import { authEnabled, sessionUser } from '@/lib/authz';

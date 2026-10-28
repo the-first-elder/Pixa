@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Suspense } from 'react';
 import AuthNav from '@/components/AuthNav';
 import LiveDemo from '@/components/landing/LiveDemo';
 import Reveal from '@/components/landing/Reveal';
@@ -21,7 +22,11 @@ export default function Home() {
             <Link href="#capture" className="transition-colors hover:text-white">Capture</Link>
           </div>
           <span className="flex items-center gap-3">
-            <AuthNav />
+            {/* Dynamic island: the rest of the landing stays static no
+                matter which env the build runs with. */}
+            <Suspense>
+              <AuthNav />
+            </Suspense>
             <Link
               href="/capture"
               className="rounded-md bg-[#e2a63b] px-4 py-2 text-sm font-medium text-black transition-transform hover:scale-[1.03]"
