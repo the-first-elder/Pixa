@@ -88,8 +88,11 @@ export function brightness(frame: ImageData): number {
   return count > 0 ? sum / count : 0;
 }
 
+export type AdviceKind = 'fast' | 'blur' | 'flat' | 'dark' | 'bright' | 'still' | 'good';
+
 export interface CaptureAdvice {
   level: 'good' | 'warn' | 'bad';
+  kind: AdviceKind;
   message: string;
 }
 
@@ -102,6 +105,7 @@ export class GuideEngine {
   private blurStreak = 0;
   private darkStreak = 0;
   private brightStreak = 0;
+  private stillStreak = 0;
 
   advise(metrics: { speed: number; blur: number; light: number }): CaptureAdvice[] {
     const out: CaptureAdvice[] = [];
@@ -109,7 +113,7 @@ export class GuideEngine {
     if (metrics.speed > 14) {
       this.fastStreak++;
       if (this.fastStreak >= 3) {
-        out.push({ level: 'bad', message: 'Too fast — move about half as fast for overlapping views.' });
+        out.push({ level: 'bad', kind: 'fast', message: 'Too fast — move about half as fast for overlapping views.' });
       }
     } else {
       this.fastStreak = 0;
@@ -121,9 +125,9 @@ export class GuideEngine {
       this.blurStreak++;
       if (this.blurStreak >= 4) {
         if (metrics.speed > 14) {
-          out.push({ level: 'warn', message: 'Blurry while moving — slow down and hold steadier.' });
+          out.push({ level: 'warn', kind: 'blur', message: 'Blurry while moving — slow down and hold steadier.' });
         } else {
-          out.push({ level: 'warn', message: 'Low detail in view (blank wall?) — aim at furniture, doors, textured surfaces.' });
+          out.push({ level: 'warn', kind: 'flat', message: 'Low detail in view (blank wall?) — aim at furniture, doors, textured surfaces.' });
         }
       }
     } else {
@@ -133,7 +137,7 @@ export class GuideEngine {
     if (metrics.light < 45) {
       this.darkStreak++;
       if (this.darkStreak >= 4) {
-        out.push({ level: 'warn', message: 'Too dark — turn on lights or avoid filming into darkness.' });
+        out.push({ level: 'warn', kind: 'dark', message: 'Too dark — turn on lights or avoid filming into darkness.' });
       }
     } else {
       this.darkStreak = 0;
@@ -141,13 +145,27 @@ export class GuideEngine {
     if (metrics.light > 210) {
       this.brightStreak++;
       if (this.brightStreak >= 4) {
-        out.push({ level: 'warn', message: 'Overexposed — avoid pointing directly at bright windows or bulbs.' });
+        out.push({ level: 'warn', kind: 'bright', message: 'Overexposed — avoid pointing directly at bright windows or bulbs.' });
       }
     } else {
       this.brightStreak = 0;
     }
     if (out.length === 0 && this.fastStreak === 0) {
-      out.push({ level: 'good', message: 'Good pace — keep panning slowly with overlapping views.' });
+      // Standing still wastes recording time without new viewpoints — but only
+      // nag after ~8 s (16 ticks at 2 Hz); brief pauses to look are fine.
+      if (metrics.speed < 2) {
+        this.stillStreak++;
+        if (this.stillStreak >= 16) {
+          out.push({ level: 'warn', kind: 'still', message: 'Standing still — keep walking slowly to cover new views.' });
+        }
+      } else {
+        this.stillStreak = 0;
+      }
+    } else {
+      this.stillStreak = 0;
+    }
+    if (out.length === 0 && this.fastStreak === 0) {
+      out.push({ level: 'good', kind: 'good', message: 'Good pace — keep panning slowly with overlapping views.' });
     }
     return out;
   }

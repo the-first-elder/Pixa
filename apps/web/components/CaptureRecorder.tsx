@@ -3,10 +3,11 @@
 import { useRouter } from 'next/navigation';
 import { stashFile } from '@/lib/file-stash';
 import { useEffect, useRef, useState } from 'react';
-import { blurScore, brightness, frameDiff, GuideEngine } from '@/lib/capture-analysis';
-import { buildReport, type CaptureReport, type MetricSample } from '@/lib/capture-report';
-import { CompassDial, useCoverageCompass } from './CoverageCompass';
+import { blurScore, brightness, frameDiff, GuideEngine, type CaptureAdvice } from '@/lib/capture-analysis';
+import { buildReport, type CaptureReport, type MetricSample, type WeakMoment } from '@/lib/capture-report';
+import { CompassDial, useCoverageCompass, useDeviceTilt } from './CoverageCompass';
 import CaptureReportView from './CaptureReportView';
+import DirectorOverlay from './DirectorOverlay';
 
 type Phase = 'idle' | 'preview' | 'recording' | 'review' | 'uploading' | 'error';
 
@@ -28,7 +29,7 @@ export default function CaptureRecorder() {
   const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
   const [cameraId, setCameraId] = useState<string>('');
   const [cameraLabel, setCameraLabel] = useState<string>('');
-  const [advice, setAdvice] = useState<{ level: string; message: string }[]>([]);
+  const [advice, setAdvice] = useState<CaptureAdvice[]>([]);
   const [meters, setMeters] = useState({ speed: 0, blur: 0, light: 0 });
   const [elapsed, setElapsed] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -36,8 +37,10 @@ export default function CaptureRecorder() {
   const [scout, setScout] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [report, setReport] = useState<CaptureReport | null>(null);
+  const [resolution, setResolution] = useState<{ w: number; h: number } | null>(null);
   const blobRef = useRef<Blob | null>(null);
   const statsRef = useRef<MetricSample[]>([]);
+  const eventsRef = useRef<WeakMoment[]>([]);
   const orientRef = useRef({ roll: 0, pitch: 0, sudden: 0, lastYaw: null as number | null });
   const elapsedRef = useRef(0);
   const compassRef = useRef({ supported: false, covered: [] as boolean[], lookedUp: false, lookedDown: false, uncoveredHint: null as string | null });
@@ -46,6 +49,7 @@ export default function CaptureRecorder() {
     phase === 'recording',
     qualityOkRef.current,
   );
+  const tilt = useDeviceTilt(phase === 'preview' || phase === 'recording');
 
   // Mirror hook/state values needed inside recorder callbacks.
   useEffect(() => {
@@ -128,6 +132,13 @@ export default function CaptureRecorder() {
       streamRef.current = stream;
       const track = stream.getVideoTracks()[0];
       setCameraLabel(track?.label || 'camera');
+      // Honest resolution readout: sub-HD sources cap reconstruction detail.
+      try {
+        const s = track?.getSettings();
+        if (s?.width && s?.height) setResolution({ w: s.width, h: s.height });
+      } catch {
+        setResolution(null);
+      }
       const video = videoRef.current;
       if (!video) throw new Error('Preview element missing');
       video.srcObject = stream;
@@ -152,7 +163,7 @@ export default function CaptureRecorder() {
       });
       setPhase('preview');
       // Starter guidance so the panel is never empty.
-      setAdvice([{ level: 'good', message: 'Camera live. Tap Record, then walk slowly around one room.' }]);
+      setAdvice([{ level: 'good', kind: 'good', message: 'Camera live. Tap Record, then walk slowly around one room.' }]);
     } catch (e) {
       stopStream();
       setError(cameraErrorMessage(e));
@@ -184,6 +195,18 @@ export default function CaptureRecorder() {
     return 'Camera unavailable. Check browser permissions, or upload a file instead.';
   }
 
+  /** Log a weak moment (merges with the previous event if same kind + close). */
+  function logEvent(kind: WeakMoment['kind'], label: string, at: number, span = 1.5) {
+    const evts = eventsRef.current;
+    const last = evts[evts.length - 1];
+    if (last && last.kind === kind && at - last.end < 3) {
+      last.end = at + span;
+    } else {
+      evts.push({ start: at, end: at + span, kind, label });
+      if (evts.length > 40) evts.shift();
+    }
+  }
+
   function analyzeLoop() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -210,7 +233,22 @@ export default function CaptureRecorder() {
         if (statsRef.current.length > 1500) statsRef.current.shift();
         const ok = blur >= 60 && light >= 45 && light <= 210;
         qualityOkRef.current = ok;
-        setAdvice(guideRef.current.advise({ speed, blur, light }));
+        const next = guideRef.current.advise({ speed, blur, light });
+        setAdvice(next);
+        // Weak-moment chapters for targeted re-recording (review screen).
+        const t = (Date.now() - t0) / 1000;
+        const labels: Record<string, string> = {
+          fast: 'moving too fast',
+          blur: 'blurry',
+          flat: 'low detail (blank wall?)',
+          dark: 'too dark',
+          bright: 'overexposed',
+        };
+        for (const a of next) {
+          const label = labels[a.kind];
+          if (label) logEvent(a.kind as WeakMoment['kind'], label, t);
+          // 'good'/'still' need no chapters.
+        }
       } catch {
         // Frame read failed (transient) — skip this tick, never crash recording.
       }
@@ -228,6 +266,7 @@ export default function CaptureRecorder() {
     if (!stream) return;
     chunksRef.current = [];
     statsRef.current = [];
+    eventsRef.current = [];
     orientRef.current = { roll: 0, pitch: 0, sudden: 0, lastYaw: null };
     resetCompass();
     const mime = MediaRecorder.isTypeSupported('video/mp4')
@@ -260,6 +299,7 @@ export default function CaptureRecorder() {
           rollWarnings: orientRef.current.roll,
           pitchWarnings: orientRef.current.pitch,
           suddenMoves: orientRef.current.sudden,
+          weakMoments: [...eventsRef.current],
         }),
       );
       setPaused(false);
@@ -299,7 +339,10 @@ export default function CaptureRecorder() {
         if (last !== null) {
           let d = Math.abs(yaw - last);
           if (d > 180) d = 360 - d;
-          if (d > 50) orientRef.current.sudden++;
+          if (d > 50) {
+            orientRef.current.sudden++;
+            logEvent('turn', 'sudden turn', elapsedRef.current, 2);
+          }
         }
         orientRef.current.lastYaw = yaw;
       }
@@ -434,6 +477,10 @@ export default function CaptureRecorder() {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  function fmtClock(s: number) {
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  }
+
   return (
     <div className="mt-8 rounded-md border border-neutral-800 p-4">
       <h2 className="text-sm font-medium">Guided recording (beta)</h2>
@@ -451,16 +498,24 @@ export default function CaptureRecorder() {
       )}
       {/* Always mounted so setup can attach the stream before preview shows.
           Hidden until there is something to display. */}
-      <video
-        ref={videoRef}
-        muted
-        playsInline
+      <div
         className={
-          phase === 'preview' || phase === 'recording'
-            ? 'mt-3 w-full rounded-md bg-black'
-            : 'hidden'
+          phase === 'preview' || phase === 'recording' ? 'relative mt-3' : 'hidden'
         }
-      />
+      >
+        <video ref={videoRef} muted playsInline className="w-full rounded-md bg-black" />
+        {phase === 'recording' && (
+          <DirectorOverlay
+            advice={advice}
+            meters={meters}
+            elapsed={elapsed}
+            paused={paused}
+            resolution={resolution}
+            tilt={tilt}
+            covered={compass.supported ? compass.covered : null}
+          />
+        )}
+      </div>
       {(phase === 'preview' || phase === 'recording') && (
         <div className="mt-3">
           {cameras.length > 1 && (
@@ -485,6 +540,21 @@ export default function CaptureRecorder() {
             </div>
           )}
           <canvas ref={canvasRef} className="hidden" />
+          {resolution && Math.max(resolution.w, resolution.h) < 1280 && (
+            <p className="mt-2 rounded-md border border-amber-800 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+              Capturing at {resolution.w}×{resolution.h} — fine detail is capped by these
+              pixels. For the sharpest reconstruction, record at 1080p or higher.
+            </p>
+          )}
+          {phase === 'recording' && (
+            <ShotChecklist
+              sectorsCovered={compass.supported ? compass.covered.filter(Boolean).length : null}
+              sectorsTotal={compass.supported ? compass.covered.length : null}
+              lookedUp={compass.supported ? compass.lookedUp : null}
+              lookedDown={compass.supported ? compass.lookedDown : null}
+              elapsed={elapsed}
+            />
+          )}
           <div className="mt-2 flex items-center gap-3 text-xs text-neutral-400">
             <span>motion {meters.speed}</span>
             <span>sharp {meters.blur}</span>
@@ -621,6 +691,52 @@ export default function CaptureRecorder() {
           Back
         </button>
       )}
+    </div>
+  );
+}
+
+/** Live shot checklist: what a complete room capture needs. Nulls = no sensors. */
+function ShotChecklist({
+  sectorsCovered,
+  sectorsTotal,
+  lookedUp,
+  lookedDown,
+  elapsed,
+}: {
+  sectorsCovered: number | null;
+  sectorsTotal: number | null;
+  lookedUp: boolean | null;
+  lookedDown: boolean | null;
+  elapsed: number;
+}) {
+  const loopDone = sectorsCovered != null && sectorsTotal != null && sectorsCovered >= sectorsTotal;
+  const loopText =
+    sectorsCovered == null || sectorsTotal == null
+      ? 'Full loop (no motion sensors — walk the full room anyway)'
+      : `Full loop ${sectorsCovered}/${sectorsTotal} directions`;
+  const items: { done: boolean | null; text: string }[] = [
+    { done: loopDone, text: loopText },
+    { done: lookedUp, text: 'Tilt up — ceiling' },
+    { done: lookedDown, text: 'Tilt down — floor' },
+    { done: elapsed >= 30, text: 'At least 30 seconds' },
+  ];
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Capture checklist">
+      {items.map((it, i) => (
+        <span
+          key={i}
+          className={`rounded-full border px-2.5 py-1 text-[11px] ${
+            it.done === true
+              ? 'border-emerald-800 bg-emerald-950/40 text-emerald-300'
+              : it.done === false
+                ? 'border-neutral-700 text-neutral-400'
+                : 'border-neutral-800 text-neutral-500'
+          }`}
+        >
+          {it.done === true ? '✓ ' : it.done === false ? '○ ' : '– '}
+          {it.text}
+        </span>
+      ))}
     </div>
   );
 }

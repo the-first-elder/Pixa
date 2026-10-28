@@ -2,6 +2,11 @@
 
 import type { CaptureReport } from '@/lib/capture-report';
 
+function fmtClock(s: number): string {
+  const m = Math.floor(s / 60);
+  return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+}
+
 /** Truthful pre-reconstruction report. Shows measured values, gaps, and what
  *  was NOT evaluated — never a success guarantee. */
 export default function CaptureReportView({ report }: { report: CaptureReport }) {
@@ -49,6 +54,21 @@ export default function CaptureReportView({ report }: { report: CaptureReport })
             <li key={i}>{r}</li>
           ))}
         </ul>
+      )}
+      {report.weakMoments.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-neutral-300">Re-record these stretches:</p>
+          <ul className="mt-1 space-y-1">
+            {report.weakMoments.map((m, i) => (
+              <li key={i} className="flex items-center justify-between rounded border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs">
+                <span className="tabular-nums text-neutral-200">
+                  {fmtClock(m.start)}–{fmtClock(m.end)}
+                </span>
+                <span className="text-neutral-400">{m.label}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {report.unevaluated.length > 0 && (
         <div className="mt-2 text-xs text-neutral-500">

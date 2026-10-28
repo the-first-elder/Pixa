@@ -121,8 +121,7 @@ export function useCoverageCompass(active: boolean, qualityOk: boolean) {
   return { state, requestPermission, reset };
 }
 
-/** Circular coverage display: lit sectors filmed, dim sectors missing. */
-export function CompassDial({ covered }: { covered: boolean[] }) {
+/** Circular coverage display: lit sectors filmed, dim sectors missing. */export function CompassDial({ covered }: { covered: boolean[] }) {
   const r = 26;
   const cx = 32;
   const cy = 32;
@@ -149,4 +148,46 @@ export function CompassDial({ covered }: { covered: boolean[] }) {
       <circle cx={cx} cy={cy} r="4" fill="#fff" />
     </svg>
   );
+}
+
+/**
+ * Live tilt for the horizon indicator. Throttled to ~4 Hz so the overlay
+ * doesn't re-render on every sensor event. Returns nulls where unsupported.
+ * gamma = left-right roll (0 = level); beta ≈ 90 upright in portrait.
+ */
+export function useDeviceTilt(active: boolean): {
+  supported: boolean;
+  gamma: number | null;
+  beta: number | null;
+} {
+  const [tilt, setTilt] = useState<{ gamma: number | null; beta: number | null }>({
+    gamma: null,
+    beta: null,
+  });
+  const [supported, setSupported] = useState(false);
+
+  useEffect(() => {
+    if (!active || !window.DeviceOrientationEvent) {
+      if (active) setSupported(false);
+      return;
+    }
+    setSupported(true);
+    let last = 0;
+    let mounted = true;
+    const handler = (e: DeviceOrientationEvent) => {
+      const now = Date.now();
+      if (!mounted || now - last < 250) return;
+      last = now;
+      if (e.gamma !== null || e.beta !== null) {
+        setTilt({ gamma: e.gamma, beta: e.beta });
+      }
+    };
+    window.addEventListener('deviceorientation', handler);
+    return () => {
+      mounted = false;
+      window.removeEventListener('deviceorientation', handler);
+    };
+  }, [active]);
+
+  return { supported, gamma: tilt.gamma, beta: tilt.beta };
 }

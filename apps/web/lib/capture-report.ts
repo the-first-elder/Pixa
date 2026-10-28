@@ -21,6 +21,13 @@ export interface CompassSummary {
   uncoveredHint: string | null;
 }
 
+export interface WeakMoment {
+  start: number; // seconds
+  end: number;
+  kind: 'fast' | 'blur' | 'flat' | 'dark' | 'bright' | 'turn';
+  label: string;
+}
+
 export interface CaptureReport {
   durationSec: number;
   estimatedBytes: number;
@@ -41,6 +48,8 @@ export interface CaptureReport {
     status: 'provisional';
     note: string;
   };
+  /** Timestamped weak stretches for targeted re-recording (measured live). */
+  weakMoments: WeakMoment[];
   unevaluated: string[];
   recommendations: string[];
   verdict: 'likely-ok' | 'needs-work' | 'unknown';
@@ -65,6 +74,7 @@ export function buildReport(args: {
   rollWarnings: number;
   pitchWarnings: number;
   suddenMoves: number;
+  weakMoments?: WeakMoment[];
 }): CaptureReport {
   const { samples } = args;
   const speeds = samples.map((s) => s.speed);
@@ -120,6 +130,12 @@ export function buildReport(args: {
   if (args.suddenMoves > 2) {
     recommendations.push('Several sudden turns detected — each one risks breaking the reconstruction chain.');
   }
+  const moments = (args.weakMoments ?? []).filter((m) => m.end > m.start);
+  if (moments.length > 0) {
+    recommendations.push(
+      'Weak stretches are listed below with timestamps — re-walk just those parts slowly instead of redoing everything.',
+    );
+  }
 
   const bad =
     blurrySharePct > 40 || darkSharePct > 40 || fastSharePct > 60 || trackingLossEvents > 2;
@@ -164,6 +180,10 @@ export function buildReport(args: {
       status: 'provisional',
       note: 'On-device directional coverage only — not room geometry. True coverage is established by reconstruction diagnostics.',
     },
+    weakMoments: (args.weakMoments ?? [])
+      .filter((m) => m.end > m.start)
+      .sort((a, b) => a.start - b.start)
+      .slice(0, 12),
     unevaluated,
     recommendations,
     verdict: samples.length === 0 ? 'unknown' : bad ? 'needs-work' : 'likely-ok',

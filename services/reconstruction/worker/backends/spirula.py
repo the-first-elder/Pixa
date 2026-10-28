@@ -361,7 +361,11 @@ def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> lis
     if not scene_id:
         return ["finish skipped: no scene linked"]
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))))
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    # spirula.py lives at <root>/services/reconstruction/worker/backends/ —
+    # five dirnames up is the repo root (verified: scripts/ must exist there).
+    assert os.path.isdir(os.path.join(repo_root, "scripts")), \
+        f"repo root resolution broken: {repo_root}"
     storage = store.storage_dir()
     env = {**os.environ, "STORAGE_DIR": storage}
 
@@ -385,6 +389,37 @@ def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> lis
                       "--data", os.path.join(workdir, "workspace"),
                       "--data-format", "colmap",
                       "--format", "glb", "--output", mesh_base], 900)
+    # Collision meshes come out at 15-50MB — too heavy for an invisible
+    # walk proxy the viewer downloads. Simplify to ~8% in place; on any
+    # failure the full mesh stands (rooms mode still works, just slower).
+    mesh_glb = mesh_base + ".glb"
+    if os.path.exists(mesh_glb):
+        gt_local = os.path.join(repo_root, "node_modules", ".bin",
+                                "gltf-transform")
+        gt_cmd = ([gt_local] if os.path.exists(gt_local)
+                  else ["npx", "-y", "@gltf-transform/cli"])
+        slim = mesh_base + ".slim.glb"
+        before = os.path.getsize(mesh_glb)
+        slim_ok = False
+        try:
+            p = subprocess.run(
+                [*gt_cmd, "simplify", "--ratio", "0.08", "--error", "0.02",
+                 mesh_glb, slim], capture_output=True, text=True, timeout=600,
+                cwd=repo_root, env=env, check=False)
+            slim_ok = (p.returncode == 0 and os.path.exists(slim)
+                       and os.path.getsize(slim) > 1024)
+            detail = "" if slim_ok else f" ({(p.stderr or p.stdout or '')[:100]})"
+        except (subprocess.TimeoutExpired, OSError) as e:
+            detail = f" ({e})"
+        if slim_ok:
+            os.replace(slim, mesh_glb)
+            after = os.path.getsize(mesh_glb)
+            notes.append(f"mesh-simplify: ok ({before // 1024}KB -> "
+                         f"{after // 1024}KB)")
+        else:
+            notes.append(f"mesh-simplify: failed, kept full mesh{detail}")
+            if os.path.exists(slim):
+                os.remove(slim)
     # Navigation + leveling + coverage (repo scripts).
     run_step("viewpoints", ["npx", "-y", "tsx", "scripts/derive-viewpoints.mts",
                              "--scene", scene_id], 300)
