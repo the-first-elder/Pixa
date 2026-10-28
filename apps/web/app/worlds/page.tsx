@@ -2,10 +2,11 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import AuthNav from '@/components/AuthNav';
 import NotificationsPanel from '@/components/NotificationsPanel';
+import SceneGrid from '@/components/SceneGrid';
 import { authEnabled, sessionUser } from '@/lib/authz';
 import { ensureNotifications } from '@/lib/notifications';
 import { listMyWorlds } from '@/lib/worlds';
-import { STATUS_LABELS, jobToStatus, segmentsToStatus, type ProjectStatus } from '@/lib/project-status';
+import { STATUS_LABELS, segmentsToStatus, type ProjectStatus } from '@/lib/project-status';
 
 function StatusPill({ status }: { status: ProjectStatus }) {
   const color =
@@ -33,18 +34,6 @@ function fmtDate(iso: string): string {
   } catch {
     return iso.slice(0, 10);
   }
-}
-
-function CardThumb({ src, alt }: { src: string | null; alt: string }) {
-  if (src) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src} alt={alt} className="aspect-[16/10] w-full object-cover" loading="lazy" />;
-  }
-  return (
-    <div className="flex aspect-[16/10] w-full items-center justify-center bg-gradient-to-br from-neutral-800 via-[#1a1611] to-black">
-      <span className="font-display text-2xl text-neutral-700">Pixa</span>
-    </div>
-  );
 }
 
 /**
@@ -109,57 +98,7 @@ export default async function WorldsPage() {
           <h2 className="text-xs font-medium uppercase tracking-[0.2em] text-neutral-500">
             Scenes
           </h2>
-          <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {scenes.map((s) => {
-              const status = jobToStatus(s.job);
-              const failed = s.job?.status === 'failed';
-              const progress = typeof s.job?.progress === 'number' ? s.job.progress : null;
-              const working = progress !== null && status !== 'ready' && status !== 'failed' && status !== 'cancelled';
-              return (
-                <article key={s.id} className="group overflow-hidden rounded-xl border border-white/10 bg-[#111113] transition-colors hover:border-white/25">
-                  <Link href={`/scenes/${s.id}`} className="block">
-                    <div className="relative">
-                      <CardThumb src={s.thumb} alt={`Capture frame from ${s.name}`} />
-                      <span className="absolute left-3 top-3">
-                        <StatusPill status={status} />
-                      </span>
-                      {s.visibility === 'public' && (
-                        <span className="absolute right-3 top-3 rounded-full border border-white/20 bg-black/60 px-2.5 py-0.5 text-xs text-neutral-200">
-                          Public
-                        </span>
-                      )}
-                    </div>
-                  </Link>
-                  <div className="px-4 pb-4 pt-3">
-                    <Link href={`/scenes/${s.id}`} className="block truncate text-sm font-medium group-hover:text-white">
-                      {s.name}
-                    </Link>
-                    <p className="mt-0.5 text-xs text-neutral-500">
-                      {fmtDate(s.createdAt)}
-                      {s.job ? ` · job ${s.job.status}` : ' · no job yet'}
-                      {failed && s.job?.errorCode ? ` · ${s.job.errorCode.slice(0, 32)}` : ''}
-                    </p>
-                    {working && (
-                      <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-neutral-800" title={`Reconstruction ${progress}%`}>
-                        <div className="h-full rounded-full bg-[#e2a63b] transition-all" style={{ width: `${Math.max(2, Math.min(100, progress))}%` }} />
-                      </div>
-                    )}
-                    <div className="mt-3">
-                      {status === 'ready' && s.job ? (
-                        <Link href={`/scenes/${s.id}`} className="inline-block rounded-md bg-white px-3 py-1.5 text-xs font-medium text-black">
-                          Explore world
-                        </Link>
-                      ) : (
-                        <Link href={`/scenes/${s.id}`} className="inline-block rounded-md border border-neutral-700 px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-400">
-                          {failed ? 'View details' : 'View progress'}
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+          <SceneGrid initial={scenes} />
         </section>
       )}
 
@@ -177,7 +116,16 @@ export default async function WorldsPage() {
                 <article key={r.id} className="group overflow-hidden rounded-xl border border-white/10 bg-[#111113] transition-colors hover:border-white/25">
                   <Link href={`/recordings/${r.id}`} className="block">
                     <div className="relative">
-                      <CardThumb src={r.thumb} alt={`Thumbnail from ${r.name}`} />
+                      {r.thumb ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={r.thumb} alt={`Thumbnail from ${r.name}`} className="aspect-[16/10] w-full object-cover" loading="lazy" />
+                      ) : (
+                        <div className="flex aspect-[16/10] w-full items-center justify-center bg-gradient-to-br from-neutral-800 via-[#1a1611] to-black">
+                          <span className="font-display text-5xl text-neutral-700">
+                            {(r.name.trim()[0] ?? '·').toUpperCase()}
+                          </span>
+                        </div>
+                      )}
                       <span className="absolute left-3 top-3">
                         <StatusPill status={status} />
                       </span>

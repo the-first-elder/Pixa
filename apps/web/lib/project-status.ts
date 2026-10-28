@@ -1,8 +1,11 @@
 /**
- * Project status mapping (server-only). Maps internal job/recording states to
- * user-facing labels. No invented percentages — indeterminate stages say so.
+ * Project status mapping. Maps internal job/recording states to user-facing
+ * labels. No invented percentages — indeterminate stages say so.
+ *
+ * NOTE: imported by client components (SceneCard). Keep this module
+ * dependency-free (no fs, no server-only, no store imports) — structural
+ * typing only.
  */
-import 'server-only';
 
 export type ProjectStatus =
   | 'ready-to-upload'

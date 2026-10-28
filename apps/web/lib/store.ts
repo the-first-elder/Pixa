@@ -132,6 +132,28 @@ export function updateScene(id: string, patch: Partial<Scene>): Scene {
   return updated;
 }
 
+/**
+ * Delete a scene and its jobs from the JSON stores. Returns the removed
+ * job ids so the caller can clean workdirs. File assets (assets/uploads/
+ * index) are the caller's job — see the DELETE scene route.
+ */
+export function deleteScene(id: string): { jobs: string[] } {
+  const scenes = load<Scene>('scenes.json');
+  if (!scenes[id]) throw new Error(`Scene not found: ${id}`);
+  delete scenes[id];
+  save('scenes.json', scenes);
+  const jobs = load<ProcessingJob>('jobs.json');
+  const removed: string[] = [];
+  for (const [jid, job] of Object.entries(jobs)) {
+    if (job.sceneId === id) {
+      delete jobs[jid];
+      removed.push(jid);
+    }
+  }
+  save('jobs.json', jobs);
+  return { jobs: removed };
+}
+
 export function createJob(sceneId: string, jobType: string, ownerId?: string | null): ProcessingJob {
   const jobs = load<ProcessingJob>('jobs.json');
   const job: ProcessingJob = {

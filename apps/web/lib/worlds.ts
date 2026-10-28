@@ -33,6 +33,10 @@ export interface WorldSceneEntry {
   parentRecordingId?: string | null;
   /** Middle evidence frame (most representative view), or null when none. */
   thumb: string | null;
+  /** Registered objects, navigation viewpoints, reconstruction coverage %. */
+  objects: number;
+  views: number;
+  coveragePct: number | null;
 }
 
 export interface WorldRecordingEntry {
@@ -54,6 +58,24 @@ function sceneThumb(sceneId: string): string | null {
     return `/api/scenes/${encodeURIComponent(sceneId)}/frames/${frames[Math.floor(frames.length / 2)]}`;
   } catch {
     return null;
+  }
+}
+
+/** Registered objects / viewpoints / coverage from the scene index. */
+function sceneStats(sceneId: string): { objects: number; views: number; coveragePct: number | null } {
+  try {
+    const idx = JSON.parse(readFileSync(join(STORAGE_DIR, 'index', `${sceneId}.json`), 'utf8')) as {
+      entities?: { position?: [number, number, number] | null }[];
+      viewpoints?: unknown[];
+      coverage?: { percent?: number };
+    };
+    return {
+      objects: (idx.entities ?? []).filter((e) => e.position != null).length,
+      views: (idx.viewpoints ?? []).length,
+      coveragePct: typeof idx.coverage?.percent === 'number' ? Math.round(idx.coverage.percent) : null,
+    };
+  } catch {
+    return { objects: 0, views: 0, coveragePct: null };
   }
 }
 
@@ -82,6 +104,7 @@ export function listMyWorlds(uid: string | null): {
       job: latestJobForScene(s.id),
       parentRecordingId: (s as Scene & { parentRecordingId?: string }).parentRecordingId ?? null,
       thumb: sceneThumb(s.id),
+      ...sceneStats(s.id),
     }));
   const recordings = Object.values(load<Recording>('recordings.json'))
     .filter((r) => mine(r, uid))
