@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shlex
+import subprocess
 import sys
 
 from . import media, store
@@ -19,7 +20,7 @@ BACKENDS = {"local": LocalBackend, "kiri": KiriBackend, "runpod": RunpodBackend,
 
 def cmd_probe(args: argparse.Namespace) -> int:
     try:
-        meta = media.probe_video(args.video)
+        meta = media.probe_video(args.video, getattr(args, 'ext', None))
     except media.MediaError as e:
         print(f"INVALID: {e}", file=sys.stderr)
         return 2
@@ -31,7 +32,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
 def cmd_extract(args: argparse.Namespace) -> int:
     try:
-        manifest = media.extract_frames(args.video, args.out, args.pipeline)
+        manifest = media.extract_frames(args.video, args.out, args.pipeline, args.fps)
     except media.MediaError as e:
         print(f"FAILED: {e}", file=sys.stderr)
         return 2
@@ -252,16 +253,169 @@ def cmd_jobs(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """Analyze a recording and write a segment manifest (no reconstruction)."""
+    from . import analysis
+    workdir = os.path.join(store.storage_dir(), "work",
+                           args.recording_id or "analysis", "analysis")
+    try:
+        manifest = analysis.analyze_recording(
+            args.video,
+            workdir,
+            args.recording_id or "pending",
+            max_seg=args.max_segment,
+            min_seg=args.min_segment,
+        )
+    except (media.MediaError, analysis.AnalysisError) as e:
+        print(f"ANALYSIS FAILED: {e}", file=sys.stderr)
+        return 2
+    if args.recording_id:
+        try:
+            rec = store.get_recording(args.recording_id)
+            rec["manifest"] = manifest
+            rec["status"] = "analyzed"
+            store.save_recording(rec)
+        except KeyError:
+            pass
+    print(json.dumps(manifest, indent=2))
+    return 0
+
+
+def cmd_process_segment(args: argparse.Namespace) -> int:
+    """Reconstruct ONE segment: trim clip (boundary overlap) → normal pipeline.
+    Creates a scene linked to the recording+segment. Reuses execute_job fully
+    (gates, backends, diagnostics included)."""
+    from . import analysis  # noqa (keeps heavy imports local)
+    try:
+        rec = store.get_recording(args.recording)
+    except KeyError:
+        print(f"UNKNOWN RECORDING: {args.recording}", file=sys.stderr)
+        return 2
+    segs = rec.get("manifest", {}).get("segments", [])
+    seg = next((s for s in segs if s["id"] == args.segment), None)
+    if seg is None:
+        print(f"UNKNOWN SEGMENT: {args.segment}", file=sys.stderr)
+        return 2
+    video = rec["manifest"]["video"]
+    clip_dir = os.path.join(store.storage_dir(), "work", args.recording)
+    os.makedirs(clip_dir, exist_ok=True)
+    clip = os.path.join(clip_dir, f"{args.segment}.mp4")
+    if not os.path.exists(clip):
+        # Stream-copy trim is fast; overlap makes cut precision non-critical.
+        p = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-ss", str(seg["start"]),
+             "-to", str(seg["end"]), "-i", video, "-c", "copy", clip],
+            capture_output=True, text=True, check=False,
+        )
+        if p.returncode != 0 or not os.path.exists(clip):
+            print(f"SEGMENT TRIM FAILED", file=sys.stderr)
+            return 2
+    try:
+        meta = media.probe_video(clip)
+    except media.MediaError as e:
+        print(f"INVALID SEGMENT CLIP: {e}", file=sys.stderr)
+        return 2
+    scene = store.create_scene(f"{rec['name']} — {args.segment}",
+                               {**meta, "sha256": media.checksum(clip)})
+    # Link scene → recording + segment (building-ready model).
+    scenes = store._load("scenes.json")
+    scenes[scene["id"]]["parentRecordingId"] = args.recording
+    scenes[scene["id"]]["segmentId"] = args.segment
+    store._save("scenes.json", scenes)
+    job = store.create_job(scene["id"], "reconstruction")
+    store.transition(job["id"], "uploaded", progress=5)
+    print(json.dumps({"sceneId": scene["id"], "jobId": job["id"], "status": "queued"}))
+    job = execute_job(job["id"], clip, args.backend, args.asset, args.poses,
+                      allow_spend=args.allow_spend, iterations=args.iterations,
+                      sfm_args=shlex.split(args.sfm_args) if args.sfm_args else None,
+                      allow_partial=args.allow_partial)
+    for s in segs:
+        if s["id"] == args.segment:
+            s["status"] = "ready" if job["status"] == "ready" else job["status"]
+            s["jobId"] = job["id"]
+            s["sceneId"] = scene["id"]
+    store.save_recording(rec)
+    print(json.dumps({"jobId": job["id"], "status": job["status"]}))
+    return 0 if job["status"] == "ready" else 1
+
+
+def cmd_recover(_args: argparse.Namespace) -> int:
+    """Mark non-terminal jobs failed/INTERRUPTED (process died mid-run).
+    Never claims resume — operator retries explicitly via run-job/process."""
+    jobs = store._load("jobs.json")
+    marked = []
+    for jid, job in jobs.items():
+        if job["status"] not in ("ready", "failed"):
+            job["status"] = "failed"
+            job["errorCode"] = "INTERRUPTED"
+            job["errorMessage"] = ("Process ended while this job was active. "
+                                   "Nothing was resumed; retry explicitly.")
+            job["completedAt"] = store.now()
+            job.setdefault("transitions", []).append({"status": "failed", "at": store.now()})
+            for k in ("trainPid", "trainPgid", "waitingForTrainer", "waitingSince"):
+                job.pop(k, None)
+            marked.append(jid)
+    store._save("jobs.json", jobs)
+    print(json.dumps({"markedInterrupted": marked}))
+    return 0
+
+
+def cmd_split_segment(args: argparse.Namespace) -> int:
+    """Split a segment at a timestamp (user correction)."""
+    try:
+        rec = store.get_recording(args.recording)
+    except KeyError:
+        print(f"UNKNOWN RECORDING: {args.recording}", file=sys.stderr)
+        return 2
+    segs = rec.get("manifest", {}).get("segments", [])
+    for i, s in enumerate(segs):
+        if s["id"] == args.segment and s["start"] < args.at < s["end"]:
+            a = {**s, "id": f"{s['id']}a", "end": args.at, "origin": "user-split",
+                 "status": "proposed", "thumbnail": s.get("thumbnail")}
+            b = {**s, "id": f"{s['id']}b", "start": args.at, "origin": "user-split",
+                 "status": "proposed", "thumbnail": s.get("thumbnail")}
+            segs[i:i + 1] = [a, b]
+            store.save_recording(rec)
+            print(json.dumps({"split": [a["id"], b["id"]]}))
+            return 0
+    print("SPLIT NOT APPLICABLE (unknown segment or timestamp outside it)", file=sys.stderr)
+    return 2
+
+
+def cmd_merge_segments(args: argparse.Namespace) -> int:
+    """Merge two segments into one spanning both (user correction)."""
+    try:
+        rec = store.get_recording(args.recording)
+    except KeyError:
+        print(f"UNKNOWN RECORDING: {args.recording}", file=sys.stderr)
+        return 2
+    segs = rec.get("manifest", {}).get("segments", [])
+    pick = [s for s in segs if s["id"] in (args.seg_a, args.seg_b)]
+    if len(pick) != 2:
+        print("MERGE NEEDS TWO KNOWN SEGMENTS", file=sys.stderr)
+        return 2
+    a, b = sorted(pick, key=lambda s: s["start"])
+    merged = {**a, "id": f"{a['id']}+{b['id']}", "end": b["end"],
+              "origin": "user-merge", "status": "proposed"}
+    segs[:] = [s for s in segs if s["id"] not in (args.seg_a, args.seg_b)] + [merged]
+    segs.sort(key=lambda s: s["start"])
+    store.save_recording(rec)
+    print(json.dumps({"merged": merged["id"]}))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="worker", description="Pixa reconstruction worker")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("probe", help="Validate + inspect a video (read-only)")
     p.add_argument("video")
+    p.add_argument("--ext", default=None, help="Format hint when the path has no usable extension")
     p.set_defaults(fn=cmd_probe)
     e = sub.add_parser("extract", help="Extract frames (pipeline A|B)")
     e.add_argument("video")
     e.add_argument("--out", required=True)
     e.add_argument("--pipeline", choices=["A", "B"], required=True)
+    e.add_argument("--fps", type=float, default=None, help="Override pipeline B fps (adaptive per-segment sampling)")
     e.set_defaults(fn=cmd_extract)
     r = sub.add_parser("process", help="Run a full reconstruction job")
     r.add_argument("video")
@@ -308,6 +462,35 @@ def main(argv: list[str] | None = None) -> int:
     i.set_defaults(fn=cmd_import_asset)
     j = sub.add_parser("jobs", help="List jobs + transitions")
     j.set_defaults(fn=cmd_jobs)
+    a = sub.add_parser("analyze", help="Analyze a recording into a segment manifest")
+    a.add_argument("video")
+    a.add_argument("--recording-id", default=None)
+    a.add_argument("--max-segment", type=float, default=150.0)
+    a.add_argument("--min-segment", type=float, default=25.0)
+    a.set_defaults(fn=cmd_analyze)
+    g = sub.add_parser("process-segment", help="Reconstruct one recording segment")
+    g.add_argument("--recording", required=True)
+    g.add_argument("--segment", required=True)
+    g.add_argument("--backend", choices=sorted(BACKENDS), default="spirula")
+    g.add_argument("--asset", default=None)
+    g.add_argument("--poses", default=None)
+    g.add_argument("--allow-spend", action="store_true")
+    g.add_argument("--iterations", type=int, default=30000)
+    g.add_argument("--sfm-args", default=None)
+    g.add_argument("--allow-partial", action="store_true")
+    g.set_defaults(fn=cmd_process_segment)
+    r = sub.add_parser("recover", help="Mark interrupted non-terminal jobs failed")
+    r.set_defaults(fn=cmd_recover)
+    sp = sub.add_parser("split-segment", help="Split a segment at a timestamp")
+    sp.add_argument("--recording", required=True)
+    sp.add_argument("--segment", required=True)
+    sp.add_argument("--at", type=float, required=True)
+    sp.set_defaults(fn=cmd_split_segment)
+    mg = sub.add_parser("merge-segments", help="Merge two segments")
+    mg.add_argument("--recording", required=True)
+    mg.add_argument("--seg-a", required=True)
+    mg.add_argument("--seg-b", required=True)
+    mg.set_defaults(fn=cmd_merge_segments)
     args = ap.parse_args(argv)
     return args.fn(args)
 

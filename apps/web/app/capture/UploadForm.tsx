@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
+import ChunkedUpload, { BIG_FILE } from '@/components/ChunkedUpload';
 
 /**
  * Capture flow (PRD §6.2): name → select video → create scene → upload with
@@ -20,6 +21,7 @@ export default function UploadForm() {
 
   const iterations = quality === 'full' ? 30000 : quality === 'balanced' ? 15000 : 7000;
   const [error, setError] = useState<string | null>(null);
+  const [bigFile, setBigFile] = useState<File | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -104,8 +106,15 @@ export default function UploadForm() {
           type="file"
           accept="video/mp4,video/quicktime,.mp4,.mov"
           className="mt-1 w-full text-sm"
+          onChange={() => {
+            const f = fileRef.current?.files?.[0] ?? null;
+            setBigFile(f && f.size > BIG_FILE ? f : null);
+          }}
         />
       </div>
+      {bigFile && (
+        <ChunkedUpload key={bigFile.name + bigFile.size} file={bigFile} name={name} />
+      )}
       {phase === 'uploading' && (
         <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
           <div className="h-full bg-white transition-all" style={{ width: `${progress}%` }} />

@@ -13,7 +13,7 @@ import random
 import struct
 import sys
 
-STORAGE = os.environ.get("STORAGE_DIR", "/Users/thefirstelder/Documents/Wordlens/data")
+STORAGE = os.environ.get("STORAGE_DIR", "./data")
 
 
 def load_points(sparse_root):

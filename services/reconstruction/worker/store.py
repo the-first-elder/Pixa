@@ -124,3 +124,32 @@ def get_job(job_id: str) -> dict[str, Any]:
 
 def list_jobs() -> list[dict[str, Any]]:
     return list(_load("jobs.json").values())
+
+
+def create_recording(name: str, manifest: dict[str, Any]) -> dict[str, Any]:
+    recs = _load("recordings.json")
+    rec = {
+        "id": new_id("rec"),
+        "name": name,
+        "status": "analyzed",
+        "createdAt": now(),
+        "manifest": manifest,
+        "connections": [],
+    }
+    recs[rec["id"]] = rec
+    _save("recordings.json", recs)
+    return rec
+
+
+def get_recording(rec_id: str) -> dict[str, Any]:
+    return _load("recordings.json")[rec_id]
+
+
+def save_recording(rec: dict[str, Any]) -> None:
+    recs = _load("recordings.json")
+    recs[rec["id"]] = rec
+    _save("recordings.json", recs)
+
+
+def list_recordings() -> list[dict[str, Any]]:
+    return list(_load("recordings.json").values())

@@ -19,11 +19,11 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         raise MediaError(f"Required binary missing: {cmd[0]}. Install FFmpeg.") from e
 
 
-def probe_video(path: str) -> dict[str, Any]:
+def probe_video(path: str, ext_hint: str | None = None) -> dict[str, Any]:
     """Read-only inspection. Writes nothing. Raises MediaError on invalid input."""
     if not os.path.exists(path):
         raise MediaError(f"File not found: {path}")
-    ext = os.path.splitext(path)[1].lower()
+    ext = (ext_hint or os.path.splitext(path)[1]).lower()
     if ext not in (".mp4", ".mov"):
         raise MediaError(f"Unsupported format {ext or '(none)'}: MVP accepts .mp4/.mov")
     size = os.path.getsize(path)
@@ -84,18 +84,15 @@ def estimate_frames(duration: float) -> dict[str, Any]:
     }
 
 
-def extract_frames(video: str, out_dir: str, pipeline: str) -> dict[str, Any]:
+def extract_frames(video: str, out_dir: str, pipeline: str, fps_override: float | None = None) -> dict[str, Any]:
     """Extract frames with ffmpeg. Returns a manifest of what was written."""
     if pipeline == "A":
         vf = "fps=1,scale=w='if(gt(iw,1280),1280,iw)':h='-2'"
         cap_note = "analysis frames (1 fps, width ≤1280, never upscaled, capped at 120)"
     elif pipeline == "B":
-        # Overlap-preserving: 2 fps. Downscale-only cap at 1600px wide —
-        # NEVER upscale: interpolated pixels add zero detail while slowing
-        # SfM/training and bloating storage (verified: 478p source was being
-        # upscaled 3.3x to 1600px wide with no new information).
-        vf = "fps=2,scale=w='if(gt(iw,1600),1600,iw)':h='-2'"
-        cap_note = "reconstruction frames (2 fps, width ≤1600, never upscaled)"
+        fps = fps_override or 2.0
+        vf = f"fps={fps},scale=w='if(gt(iw,1600),1600,iw)':h='-2'"
+        cap_note = f"reconstruction frames ({fps} fps, width ≤1600, never upscaled)"
     else:
         raise MediaError("pipeline must be 'A' or 'B'")
     os.makedirs(out_dir, exist_ok=True)
