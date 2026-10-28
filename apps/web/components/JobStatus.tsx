@@ -30,6 +30,8 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef<number | null>(startedAt ? new Date(startedAt).getTime() : null);
+  // All hooks above all early returns — hook order must never change.
+  const active = !job || (job.status !== 'ready' && job.status !== 'failed');
 
   useEffect(() => {
     let cancelled = false;
@@ -41,8 +43,8 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
         const data = (await res.json()) as JobState;
         if (!cancelled) {
           setJob(data);
-          if (!startRef.current && (data as JobState & { startedAt?: string }).startedAt) {
-            startRef.current = new Date((data as JobState & { startedAt?: string }).startedAt as string).getTime();
+          if (!startRef.current && data.startedAt) {
+            startRef.current = new Date(data.startedAt).getTime();
           }
         }
         if (data.status === 'ready' && !reloaded) {
@@ -67,12 +69,6 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
     };
   }, [jobId]);
 
-  if (error) return <p className="text-sm text-red-400">Status error: {error}</p>;
-  if (!job) return <p className="text-sm text-neutral-500">Loading job status…</p>;
-  const active = job.status !== 'ready' && job.status !== 'failed';
-  const startMs = startRef.current ?? (job.startedAt ? new Date(job.startedAt).getTime() : null);
-  if (startRef.current === null && startMs !== null) startRef.current = startMs;
-
   // Ticking elapsed timer while the job is active.
   useEffect(() => {
     if (!active) return;
@@ -82,6 +78,10 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
     }, 1000);
     return () => window.clearInterval(t);
   }, [active, jobId]);
+
+  if (error) return <p className="text-sm text-red-400">Status error: {error}</p>;
+  if (!job) return <p className="text-sm text-neutral-500">Loading job status…</p>;
+  const displayStart = startRef.current ?? (job.startedAt ? new Date(job.startedAt).getTime() : null);
 
   async function cancel() {
     try {
@@ -99,7 +99,7 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
         <span className="text-neutral-400">Job {job.jobId}</span>
         <span className="flex items-center gap-2">
           <span className="font-medium">{job.status}</span>
-          {active && startRef.current && (
+          {active && displayStart && (
             <span className="text-xs tabular-nums text-neutral-500" title="Elapsed processing time">
               {fmtElapsed(elapsed)}
             </span>
