@@ -50,8 +50,8 @@ function easeInOutCubic(t: number): number {
  * programmatic camera tweens. Manifest-driven; with no ready asset it shows
  * an honest empty state — never a substitute scene.
  */
-const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpointId?: string }>(function SceneViewer(
-  { sceneId, initialViewpointId },
+const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpointId?: string; drift?: boolean }>(function SceneViewer(
+  { sceneId, initialViewpointId, drift },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -121,6 +121,12 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
+        // Showcase drift: slow auto-orbit for embeds. Disabled automatically
+        // under prefers-reduced-motion.
+        if (drift && typeof window !== 'undefined' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          controls.autoRotate = true;
+          controls.autoRotateSpeed = 0.5;
+        }
 
         // Walk mode: drag-look + WASD free-fly, clamped to a bounding sphere
         // around the capture volume. No collision yet (splats are not

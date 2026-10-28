@@ -8,3 +8,36 @@ body {
   background: #0a0a0b;
   color: #e8e8ea;
 }
+
+.font-display {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+::selection {
+  background: #e2a63b;
+  color: #0a0a0b;
+}
+
+:focus-visible {
+  outline: 2px solid #e2a63b;
+  outline-offset: 3px;
+}
+
+@keyframes pixa-drift {
+  from {
+    transform: scale(1.02) translate(0, 0);
+  }
+  to {
+    transform: scale(1.12) translate(-1.5%, -2%);
+  }
+}
+
+.hero-drift {
+  animation: pixa-drift 26s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-drift {
+    animation: none;
+  }
+}
