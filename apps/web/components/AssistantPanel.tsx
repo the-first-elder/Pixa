@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CameraCommand } from './SceneViewer';
 import VoiceButton from './VoiceButton';
 
@@ -43,6 +43,35 @@ export default function AssistantPanel({
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [phase, setPhase] = useState<'idle' | 'thinking' | 'executing' | 'error'>('idle');
   const [notice, setNotice] = useState<string | null>(null);
+  const [speak, setSpeak] = useState(false);
+  const speakRef = useRef(speak);
+  speakRef.current = speak;
+
+  // Spoken answers via browser speech synthesis (no Meta TTS exists).
+  // Speaks each new assistant reply while enabled; stops on toggle/unmount.
+  function say(text: string) {
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      synth.cancel();
+      const utter = new SpeechSynthesisUtterance(text.slice(0, 600));
+      synth.speak(utter);
+    } catch {
+      // Speech unsupported — text remains the source of truth.
+    }
+  }
+  useEffect(() => {
+    if (!speakRef.current) {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch { /* ignore */ }
+    }
+  }, [speak]);
+  useEffect(() => () => {
+    try {
+      window.speechSynthesis?.cancel();
+    } catch { /* ignore */ }
+  }, []);
 
   async function confirm(actionId: string, executed: boolean, extra: Record<string, unknown> = {}) {
     try {
@@ -109,6 +138,7 @@ export default function AssistantPanel({
         }
       }
       setMessages((m) => [...m, { role: 'assistant', content: data.response, actions: data.actions }]);
+      if (speakRef.current) say(data.response);
       setPhase('idle');
     } catch (e) {
       setPhase('error');
@@ -118,6 +148,17 @@ export default function AssistantPanel({
 
   return (
     <div className="flex h-full flex-col">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wider text-neutral-500">Assistant</span>
+        <button
+          type="button"
+          onClick={() => setSpeak((s) => !s)}
+          className={`rounded border px-2 py-0.5 text-xs ${speak ? 'border-white bg-white text-black' : 'border-neutral-700 text-neutral-400'}`}
+          title={speak ? 'Mute spoken answers' : 'Speak answers aloud (browser speech)'}
+        >
+          {speak ? '🔊 On' : '🔇 Off'}
+        </button>
+      </div>
       <div className="flex-1 space-y-3 overflow-auto">
         {messages.length === 0 && (
           <p className="text-sm text-neutral-500">
