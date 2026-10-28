@@ -48,14 +48,32 @@ def probe_video(path: str, ext_hint: str | None = None) -> dict[str, Any]:
     parts = s.get("avg_frame_rate", "30/1").split("/")
     fps = float(parts[0]) / float(parts[1]) if len(parts) == 2 and float(parts[1]) else 0.0
     duration = float(info.get("format", {}).get("duration") or s.get("duration") or 0.0)
+    width, height = int(s["width"]), int(s["height"])
+    # Resolution honesty: sub-HD sources cap reconstruction sharpness no
+    # matter the settings (measured: all current footage is 478p). Warn, don't
+    # block — the pipeline squeezes the most from what's there.
+    quality_warning = None
+    if max(width, height) < 720:
+        quality_warning = (
+            f"Low source resolution ({width}x{height}): fine detail cannot be "
+            "reconstructed beyond what these pixels hold. For sharper results, "
+            "upload the original camera recording (1080p+) instead of a "
+            "compressed share."
+        )
+    elif max(width, height) < 1080:
+        quality_warning = (
+            f"Sub-HD source ({width}x{height}): usable, but original 1080p+ "
+            "footage would reconstruct visibly sharper."
+        )
     return {
         "path": os.path.abspath(path),
-        "width": int(s["width"]),
-        "height": int(s["height"]),
+        "width": width,
+        "height": height,
         "fps": round(fps, 2),
         "duration": round(duration, 2),
         "codec": s.get("codec_name"),
         "sizeBytes": size,
+        "qualityWarning": quality_warning,
         "contentType": "video/mp4" if ext == ".mp4" else "video/quicktime",
     }
 

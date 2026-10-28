@@ -24,6 +24,7 @@ export default function UploadForm() {
   const [error, setError] = useState<string | null>(null);
   const [bigFile, setBigFile] = useState<File | null>(null);
   const [restored, setRestored] = useState(false);
+  const [qualityWarning, setQualityWarning] = useState<string | null>(null);
 
   // After a sign-in redirect, restore the stashed file (one-shot).
   useEffect(() => {
@@ -78,6 +79,7 @@ export default function UploadForm() {
 
       setPhase('uploading');
       setProgress(0);
+      setQualityWarning(null);
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `/api/scenes/${sceneId}/upload`);
@@ -85,8 +87,17 @@ export default function UploadForm() {
           if (ev.lengthComputable) setProgress(Math.round((ev.loaded / ev.total) * 100));
         };
         xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const body = JSON.parse(xhr.responseText) as {
+                probe?: { qualityWarning?: string | null };
+              };
+              if (body.probe?.qualityWarning) setQualityWarning(body.probe.qualityWarning);
+            } catch {
+              // Non-fatal: warning display only.
+            }
+            resolve();
+          } else {
             try {
               const body = JSON.parse(xhr.responseText) as { error?: string };
               reject(new Error(body.error ?? `Upload failed (${xhr.status})`));
@@ -152,6 +163,11 @@ export default function UploadForm() {
       {restored && (
         <p className="rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
           Your selected video was restored after signing in — press Upload and reconstruct to continue.
+        </p>
+      )}
+      {qualityWarning && (
+        <p className="rounded-md border border-amber-800 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+          {qualityWarning}
         </p>
       )}
       {phase === 'uploading' && (

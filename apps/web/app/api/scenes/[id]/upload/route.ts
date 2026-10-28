@@ -53,12 +53,24 @@ export async function POST(
   writeFileSync(dest, Buffer.from(await file.arrayBuffer()));
 
   // Real validation via the worker (ffprobe codec/duration/overlap estimates).
+  let probe: {
+    width?: number;
+    height?: number;
+    duration?: number;
+    fps?: number;
+    qualityWarning?: string | null;
+  } = {};
   try {
-    execFileSync('python3', ['-m', 'worker', 'probe', dest], {
+    const out = execFileSync('python3', ['-m', 'worker', 'probe', dest], {
       cwd: workerDir(),
       stdio: 'pipe',
       env: { ...process.env, STORAGE_DIR },
     });
+    try {
+      probe = JSON.parse(out.toString()) as typeof probe;
+    } catch {
+      probe = {};
+    }
   } catch (e) {
     const stderr = (e as { stderr?: Buffer }).stderr?.toString().slice(0, 300)
       ?? 'probe failed';
@@ -71,5 +83,15 @@ export async function POST(
   const updated = updateScene(scene.id, {
     sourceVideo: { storagePath: dest, originalName: file.name, sizeBytes: file.size },
   });
-  return NextResponse.json({ sceneId: updated.id, sourceVideo: updated.sourceVideo });
+  return NextResponse.json({
+    sceneId: updated.id,
+    sourceVideo: updated.sourceVideo,
+    probe: {
+      width: probe.width ?? null,
+      height: probe.height ?? null,
+      duration: probe.duration ?? null,
+      fps: probe.fps ?? null,
+      qualityWarning: probe.qualityWarning ?? null,
+    },
+  });
 }
