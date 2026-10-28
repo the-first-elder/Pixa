@@ -22,6 +22,9 @@ export default function CaptureRecorder() {
   const guideRef = useRef(new GuideEngine());
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
+  const [cameraId, setCameraId] = useState<string>('');
+  const [cameraLabel, setCameraLabel] = useState<string>('');
   const [advice, setAdvice] = useState<{ level: string; message: string }[]>([]);
   const [meters, setMeters] = useState({ speed: 0, blur: 0, light: 0 });
   const [elapsed, setElapsed] = useState(0);
@@ -40,21 +43,77 @@ export default function CaptureRecorder() {
     streamRef.current = null;
   }
 
-  async function startPreview() {
+  async function listCameras(): Promise<{ id: string; label: string }[]> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter((d) => d.kind === 'videoinput')
+        .map((d, i) => ({ id: d.deviceId, label: d.label || `Camera ${i + 1}` }));
+    } catch {
+      return [];
+    }
+  }
+
+  async function startPreview(deviceId?: string) {
     setError(null);
     try {
+      // Labels are empty until permission is granted once; list before/after.
+      let cams = await listCameras();
+      if (cams.length === 0) {
+        // Trigger permission to reveal labels, then re-list.
+        const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        tmp.getTracks().forEach((t) => t.stop());
+        cams = await listCameras();
+      }
+      setCameras(cams);
+      const picked =
+        deviceId ??
+        cameraId ||
+        cams.find((c) => /back|rear|environment/i.test(c.label))?.id ??
+        cams[0]?.id ??
+        '';
+      if (picked) setCameraId(picked);
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 } },
+        video: picked
+          ? { deviceId: { exact: picked }, width: { ideal: 1280 } }
+          : { facingMode: 'environment', width: { ideal: 1280 } },
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
+      const track = stream.getVideoTracks()[0];
+      setCameraLabel(track?.label || 'camera');
+      const video = videoRef.current;
+      if (!video) throw new Error('Preview element missing');
+      video.srcObject = stream;
+      // Handshake: wait for real frames, not just a resolved play() promise.
+      await new Promise<void>((resolve, reject) => {
+        const to = window.setTimeout(() => reject(new Error('timeout')), 8000);
+        video.onloadedmetadata = () => {
+          video.play().then(() => {
+            // Confirm frames actually flow.
+            const check = window.setInterval(() => {
+              if (video.videoWidth > 0 && video.readyState >= 2) {
+                window.clearInterval(check);
+                window.clearTimeout(to);
+                resolve();
+              }
+            }, 200);
+          }).catch((e: unknown) => {
+            window.clearTimeout(to);
+            reject(e instanceof Error ? e : new Error('play failed'));
+          });
+        };
+      });
       setPhase('preview');
-    } catch {
-      setError('Camera unavailable. Check browser permissions, or upload a file instead.');
+      // Starter guidance so the panel is never empty.
+      setAdvice([{ level: 'good', message: 'Camera live. Tap Record, then walk slowly around one room.' }]);
+    } catch (e) {
+      stopStream();
+      setError(
+        e instanceof Error && e.message === 'timeout'
+          ? 'Camera opened but delivered no frames. Try another camera below, another browser, or HTTPS/localhost.'
+          : 'Camera unavailable. Check browser permissions, or upload a file instead.',
+      );
       setPhase('error');
     }
   }
@@ -194,6 +253,27 @@ export default function CaptureRecorder() {
       )}
       {(phase === 'preview' || phase === 'recording') && (
         <div className="mt-3">
+          {cameras.length > 1 && (
+            <div className="mb-2 flex items-center gap-2 text-xs text-neutral-400">
+              <label htmlFor="capture-camera">Camera ({cameraLabel || 'unknown'})</label>
+              <select
+                id="capture-camera"
+                value={cameraId}
+                onChange={(e) => {
+                  stopStream();
+                  setPhase('idle');
+                  startPreview(e.target.value);
+                }}
+                className="flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs"
+              >
+                {cameras.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <video ref={videoRef} muted playsInline className="w-full rounded-md bg-black" />
           <canvas ref={canvasRef} className="hidden" />
           <div className="mt-2 flex items-center gap-3 text-xs text-neutral-400">
