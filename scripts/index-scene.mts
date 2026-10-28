@@ -49,7 +49,9 @@ const probeFrames = [...probeIdx].map((i) => sampled[i]);
 console.log(`spark pass on: ${probeFrames.join(', ')}`);
 const seen = new Set<string>();
 for (const f of probeFrames) {
-  const r = await chat({
+  let r;
+  try {
+    r = await withRetry(() => chat({
     messages: [
       {
         role: 'user',
@@ -67,7 +69,11 @@ for (const f of probeFrames) {
       },
     },
     maxTokens: 2048,
-  });
+    }), `spark probe ${f}`);
+  } catch (e) {
+    console.log(`  spark probe failed for ${f}, skipping`);
+    continue;
+  }
   try {
     const parsed = JSON.parse(r.content ?? '{}') as { objects?: string[] };
     for (const o of parsed.objects ?? []) {
@@ -79,7 +85,9 @@ for (const f of probeFrames) {
   }
 }
 const canon = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-const labels = [...new Set([...seen].map(canon).concat(extraPrompts))].filter(Boolean).slice(0, Math.max(maxLabels, extraPrompts.length));
+// Explicit user prompts take priority (they come first so caps never cut them),
+// then discovered labels fill the remaining budget.
+const labels = [...new Set(extraPrompts.concat([...seen].map(canon)))].filter(Boolean).slice(0, Math.max(maxLabels, extraPrompts.length));
 console.log(`labels: ${labels.join(', ') || '(none)'}`);
 if (labels.length === 0) {
   console.log('No labels found; writing empty index.');
@@ -95,11 +103,31 @@ if (calls > 0 && !confirmed) {
 }
 
 interface Detection { frame: string; frameIdx: number; label: string; boxes: { xMin: number; yMin: number; xMax: number; yMax: number }[] }
+
+/** Network calls fail sometimes; retry with backoff instead of losing the run. */
+async function withRetry<T>(fn: () => Promise<T>, what: string, tries = 4): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      const wait = 2000 * (i + 1);
+      console.log(`  retry ${i + 1}/${tries} for ${what} after ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw last;
+}
+
 const detections: Detection[] = [];
 for (const label of labels) {
   for (const f of sampled) {
     const frameIdx = parseInt(basename(f, '.jpg'), 10);
-    const seg = await segmentImage({ image: `data:image/jpeg;base64,${b64(f)}`, prompt: label });
+    const seg = await withRetry(
+      () => segmentImage({ image: `data:image/jpeg;base64,${b64(f)}`, prompt: label }),
+      `${label} @${f}`,
+    );
     if (seg.boxes.length > 0) {
       detections.push({ frame: f, frameIdx, label, boxes: seg.boxes });
       console.log(`  ${label} @${f}: ${seg.boxes.length} box(es)`);
@@ -164,6 +192,19 @@ writeFileSync(join(indexDir, `${sceneId}.json`), JSON.stringify({
   viewpoints: prev?.viewpoints ?? [],
   ...(prev && 'coverage' in prev ? { coverage: (prev as { coverage: unknown }).coverage } : {}),
 }, null, 2));
+// Merge (not overwrite) the detections sidecar: registration depends on it.
+let prevDetections: Detection[] = [];
+try {
+  prevDetections = JSON.parse(readFileSync(join(indexDir, `${sceneId}.detections.json`), 'utf8'));
+} catch { /* first run */ }
+const seenD = new Set(detections.map((d) => `${d.label}|${d.frame}|${JSON.stringify(d.boxes)}`));
+for (const d of prevDetections) {
+  const k = `${d.label}|${d.frame}|${JSON.stringify(d.boxes)}`;
+  if (!seenD.has(k)) {
+    detections.push(d);
+    seenD.add(k);
+  }
+}
 writeFileSync(join(indexDir, `${sceneId}.detections.json`), JSON.stringify(detections, null, 2));
 const framesOut = join(storage, 'assets', sceneId, 'frames');
 mkdirSync(framesOut, { recursive: true });
