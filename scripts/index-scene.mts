@@ -68,10 +68,14 @@ for (const f of probeFrames) {
         schema: { type: 'object', properties: { objects: { type: 'array', items: { type: 'string' } } }, required: ['objects'], additionalProperties: false },
       },
     },
-    maxTokens: 2048,
+    maxTokens: 4096, // Spark reasons first (~300 tok); small budgets starve output -> null content
     }), `spark probe ${f}`);
   } catch (e) {
     console.log(`  spark probe failed for ${f}, skipping`);
+    continue;
+  }
+  if (r.content == null) {
+    console.log(`  spark probe returned null content for ${f} (reasoning starved), skipping`);
     continue;
   }
   try {
