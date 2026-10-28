@@ -6,8 +6,8 @@
 import 'server-only';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chat, type ChatContentPart, type ToolCall } from '@worldlens/model-adapters';
-import type { ActionResult } from '@worldlens/shared-types';
+import { chat, type ChatContentPart, type ToolCall } from '@pixa/model-adapters';
+import type { ActionResult } from '@pixa/shared-types';
 import { STORAGE_DIR } from './config';
 import {
   appendHistory,
@@ -20,7 +20,7 @@ import { getSceneIndex, relatedEntities } from './scene-index';
 import { TOOL_DEFS, describeRelated, validateToolCall } from './tools';
 import { calibrateSceneScale, measureLabel } from './scale';
 
-const SYSTEM_PROMPT = `You are the WorldLens scene assistant. You control a reconstructed 3D environment through tools — you never manipulate the renderer directly.
+const SYSTEM_PROMPT = `You are the Pixa scene assistant. You control a reconstructed 3D environment through tools — you never manipulate the renderer directly.
 
 Grounding rules (no exceptions):
 - OBSERVED: only what the provided scene summary and evidence support.

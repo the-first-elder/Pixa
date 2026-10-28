@@ -1,5 +1,5 @@
 /**
- * @worldlens/scene-schema — versioned scene manifest + graph schema (PRD §§ 10.5, 11.4).
+ * @pixa/scene-schema — versioned scene manifest + graph schema (PRD §§ 10.5, 11.4).
  * Manifest version is checked on load; unknown versions are rejected, never guessed.
  */
 import type {
@@ -9,7 +9,7 @@ import type {
   SceneCapabilities,
   VisualStatus,
   SpatialRegistrationStatus,
-} from '@worldlens/shared-types';
+} from '@pixa/shared-types';
 
 export const MANIFEST_VERSION = 1 as const;
 export const GRAPH_VERSION = 1 as const;

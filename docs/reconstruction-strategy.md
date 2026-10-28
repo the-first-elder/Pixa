@@ -35,7 +35,7 @@ Local-COLMAP-sparse + OpenSplat remains a disk-constrained fallback (needs ≥10
 
 ## Spirula status: INSTALLED + smoke-tested (2026-10-27, $0)
 
-- Binary: `spirula` v2026.10.16 (macOS ARM64, 150 MB) at `~/.worldlens/bin/spirula`
+- Binary: `spirula` v2026.10.16 (macOS ARM64, 150 MB) at `~/.pixa/bin/spirula`
   (`WL_SPIRULA_BIN` overrides). Vulkan/MoltenVK device confirmed working.
 - CLI contract verified live: `sfm auto IMAGES -o WORKSPACE` → COLMAP-format
   `sparse/0`; `train --data WORKSPACE --data-format colmap --num-iterations N` → `.ply`.

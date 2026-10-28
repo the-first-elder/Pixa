@@ -78,7 +78,7 @@ const near: Relationship[] = [];
 }
 
 // Regions via Spark (inferred; constrained to indexed entities only).
-const { chat } = await import('@worldlens/model-adapters');
+const { chat } = await import('@pixa/model-adapters');
 const listing = index.entities.map((e) => `- ${e.label} [${e.type}] id=${e.id}`).join('\n');
 console.log('--- spark region proposal ---');
 const r = await chat({

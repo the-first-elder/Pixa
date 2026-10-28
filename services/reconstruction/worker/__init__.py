@@ -1,1 +1,1 @@
-"""WorldLens reconstruction worker package."""
+"""Pixa reconstruction worker package."""

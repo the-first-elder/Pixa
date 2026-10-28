@@ -24,7 +24,7 @@ process.env.META_API_KEY = apiKey;
 process.env.META_API_BASE = 'https://api.meta.ai/v1';
 
 const { listModels, chat, segmentImage, transcribe, generateImage } = await import(
-  '@worldlens/model-adapters'
+  '@pixa/model-adapters'
 );
 
 // 1. Free access check.

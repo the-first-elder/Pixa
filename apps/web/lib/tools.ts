@@ -4,7 +4,7 @@
  * renderer EXECUTES and confirms. Model output is never trusted as an
  * executable command.
  */
-import type { ToolDefinition } from '@worldlens/model-adapters';
+import type { ToolDefinition } from '@pixa/model-adapters';
 import {
   findByLabel,
   evidenceViewpoint,

@@ -1,4 +1,4 @@
-# WorldLens
+# Pixa
 
 AI-powered spatial computing: record a physical space on an ordinary phone,
 get a reconstructed 3D environment in the browser, and explore it through

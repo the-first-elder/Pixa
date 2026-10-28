@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { assertManifestVersion } from '@worldlens/scene-schema';
+import { assertManifestVersion } from '@pixa/scene-schema';
 import { getScene, latestJobForScene, updateScene } from '@/lib/store';
 import { getSceneIndex } from '@/lib/scene-index';
 import { manifestForScene } from '@/lib/manifest';

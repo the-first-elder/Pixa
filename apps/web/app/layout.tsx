@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'WorldLens',
+  title: 'Pixa',
   description: 'Phone video to explorable 3D environments, navigated by natural language.',
 };
 

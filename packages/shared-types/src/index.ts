@@ -1,5 +1,5 @@
 /**
- * @worldlens/shared-types — contracts shared by apps/web and services/*.
+ * @pixa/shared-types — contracts shared by apps/web and services/*.
  * Source PRD: §§ 10, 11, 22, 23. These types are the law: worker output,
  * scene index, tool loop, and UI must all conform to them.
  */

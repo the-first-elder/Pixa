@@ -10,9 +10,9 @@
   },
   "dependencies": {
     "@sparkjsdev/spark": "latest",
-    "@worldlens/model-adapters": "0.1.0",
-    "@worldlens/scene-schema": "0.1.0",
-    "@worldlens/shared-types": "0.1.0",
+    "@pixa/model-adapters": "0.1.0",
+    "@pixa/scene-schema": "0.1.0",
+    "@pixa/shared-types": "0.1.0",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",

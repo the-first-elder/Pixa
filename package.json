@@ -1,8 +1,8 @@
 {
-  "name": "worldlens",
+  "name": "pixa",
   "version": "0.1.0",
   "private": true,
-  "description": "WorldLens — AI-powered spatial computing: phone video to explorable 3D environments",
+  "description": "Pixa — AI-powered spatial computing: phone video to explorable 3D environments",
   "workspaces": [
     "apps/*",
     "packages/*"

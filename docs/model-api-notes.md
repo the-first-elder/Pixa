@@ -16,7 +16,7 @@
 `muse-spark-1.2`, `muse-spark-1.2-contributor`, `muse-spark-1.1`,
 `muse-voice-transcribe-1.0`, `muse-image-1.0`, `sam-3.1`
 
-## Capability map (WorldLens use → model → endpoint)
+## Capability map (Pixa use → model → endpoint)
 
 | Use | Model | Endpoint | Notes |
 |---|---|---|---|

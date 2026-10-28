@@ -1,11 +1,11 @@
 {
-  "name": "@worldlens/scene-schema",
+  "name": "@pixa/scene-schema",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@worldlens/shared-types": "0.1.0"
+    "@pixa/shared-types": "0.1.0"
   }
 }

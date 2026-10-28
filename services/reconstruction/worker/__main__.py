@@ -253,7 +253,7 @@ def cmd_jobs(_args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="worker", description="WorldLens reconstruction worker")
+    ap = argparse.ArgumentParser(prog="worker", description="Pixa reconstruction worker")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("probe", help="Validate + inspect a video (read-only)")
     p.add_argument("video")

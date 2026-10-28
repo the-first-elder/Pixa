@@ -36,7 +36,7 @@ const step = Math.max(1, Math.floor(allFrames.length / maxFrames));
 const sampled = allFrames.filter((_, i) => i % step === 0).slice(0, maxFrames);
 console.log(`frames: ${allFrames.length} total, ${sampled.length} sampled`);
 
-const { chat, segmentImage } = await import('@worldlens/model-adapters');
+const { chat, segmentImage } = await import('@pixa/model-adapters');
 const b64 = (f: string) => readFileSync(join(framesDir, f)).toString('base64');
 
 // Pass 1: Spark lists distinct object categories across MANY frames so small

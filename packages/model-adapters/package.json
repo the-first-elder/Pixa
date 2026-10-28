@@ -1,5 +1,5 @@
 {
-  "name": "@worldlens/model-adapters",
+  "name": "@pixa/model-adapters",
   "version": "0.1.0",
   "private": true,
   "type": "module",

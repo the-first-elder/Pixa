@@ -13,7 +13,7 @@ newest .ply under outputs/. Poses come from the COLMAP-format sparse model
 Honesty: if sfm finds no connected model or train produces no PLY, the job
 fails with a named error. Never fabricate cameras or splats.
 
-Binary location: $WL_SPIRULA_BIN, else ~/.worldlens/bin/spirula.
+Binary location: $WL_SPIRULA_BIN, else ~/.pixa/bin/spirula.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from typing import Any
 
 from .. import media, store
 
-DEFAULT_BIN = os.path.expanduser("~/.worldlens/bin/spirula")
+DEFAULT_BIN = os.path.expanduser("~/.pixa/bin/spirula")
 SFM_TIMEOUT = 2 * 60 * 60
 TRAIN_TIMEOUT = 6 * 60 * 60
 

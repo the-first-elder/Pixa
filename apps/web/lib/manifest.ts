@@ -7,7 +7,7 @@
 import 'server-only';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MANIFEST_VERSION, type SceneManifest } from '@worldlens/scene-schema';
+import { MANIFEST_VERSION, type SceneManifest } from '@pixa/scene-schema';
 import { readyAssetForScene } from './store';
 import { STORAGE_DIR } from './config';
 

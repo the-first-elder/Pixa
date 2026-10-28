@@ -4,8 +4,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { transcribe } from '@worldlens/model-adapters';
-import { loadConfig } from '@worldlens/model-adapters';
+import { transcribe } from '@pixa/model-adapters';
+import { loadConfig } from '@pixa/model-adapters';
 import { getScene } from '@/lib/store';
 
 /**

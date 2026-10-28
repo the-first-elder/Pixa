@@ -1,4 +1,4 @@
-# WorldLens — Staged Build PRD
+# Pixa — Staged Build PRD
 
 Version: 1.0
 Status: Build specification for staged implementation
@@ -333,7 +333,7 @@ Priority: P0 for basic graph; P1 for advanced geometry · Feature 5 of the PRD
 
 ### Goals
 
-The formal graph that lets WorldLens move beyond generic image QA: known entities + relationships + provenance. This is NOT the Gaussian-splat representation — a separate data structure describing what the system *knows*.
+The formal graph that lets Pixa move beyond generic image QA: known entities + relationships + provenance. This is NOT the Gaussian-splat representation — a separate data structure describing what the system *knows*.
 
 ### Preconditions
 
@@ -515,7 +515,7 @@ Make capture better through AI guidance, and make every answer traceable to evid
 
 **P0 for basic implementation; P1 for advanced guidance.** One of the strongest differentiation opportunities (PRD §7).
 
-Most users cannot capture reconstructable footage: they turn too quickly, lack overlap, skip objects, miss room corners, record through windows/mirrors confusingly, skip transitions between connected areas, leave environments occluded. WorldLens must help *produce* footage that reconstructs well.
+Most users cannot capture reconstructable footage: they turn too quickly, lack overlap, skip objects, miss room corners, record through windows/mirrors confusingly, skip transitions between connected areas, leave environments occluded. Pixa must help *produce* footage that reconstructs well.
 
 #### Tasks
 
@@ -834,7 +834,7 @@ Development targets, not guarantees (actual results depend on asset size, browse
 ### 11.13 Suggested Project Structure (PRD §31)
 
 ```
-worldlens/
+pixa/
 ├── apps/web/
 │   ├── app/pages: page.tsx, capture/, scenes/, api/
 │   ├── components: scene-viewer/, assistant/, capture/, scene-explorer/
@@ -949,7 +949,7 @@ People increasingly need to understand physical spaces without being physically 
 
 ### Solution
 
-WorldLens turns a phone video into an explorable digital environment. After upload, the user gets a reconstructed 3D scene in a browser, then issues instructions like: “Take me to the kitchen.” · “Show me all the doors.” · “What is beside the entrance?” · “Highlight every fire extinguisher.” · “Show me the route between these two locations.” · “Find a quiet corner where I could put a desk.” · “Can a wheelchair get through this doorway?”
+Pixa turns a phone video into an explorable digital environment. After upload, the user gets a reconstructed 3D scene in a browser, then issues instructions like: “Take me to the kitchen.” · “Show me all the doors.” · “What is beside the entrance?” · “Highlight every fire extinguisher.” · “Show me the route between these two locations.” · “Find a quiet corner where I could put a desk.” · “Can a wheelchair get through this doorway?”
 
 The system interprets, identifies relevant spatial information, executes actions in the scene; provides measurements/routes/relationships where the reconstruction supports them; and **communicates limitation rather than inventing an answer** when information is missing or unreliable.
 
@@ -963,7 +963,7 @@ If people can capture a physical environment with a phone and subsequently inter
 
 ### Vision
 
-Make physical environments understandable and interactive through AI. No specialized 3D software, advanced modeling skills, or pre-existing digital twin: the user records, WorldLens handles reconstruction workflow, spatial organization, and the intelligent exploration interface.
+Make physical environments understandable and interactive through AI. No specialized 3D software, advanced modeling skills, or pre-existing digital twin: the user records, Pixa handles reconstruction workflow, spatial organization, and the intelligent exploration interface.
 
 ### Primary objective
 
