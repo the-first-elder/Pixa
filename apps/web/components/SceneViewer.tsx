@@ -51,8 +51,8 @@ function easeInOutCubic(t: number): number {
  * programmatic camera tweens. Manifest-driven; with no ready asset it shows
  * an honest empty state — never a substitute scene.
  */
-const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function SceneViewer(
-  { sceneId },
+const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpointId?: string }>(function SceneViewer(
+  { sceneId, initialViewpointId },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -301,11 +301,12 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string }>(function Scene
               : SplatFileType.PLY,
           onLoad: () => {
             if (cancelled) return;
-            // Prefer the derived overview viewpoint (real poses); fall back
-            // to the splat bounds, then to the default camera.
-            const vp = (manifest.viewpoints ?? []).find(
-              (v) => v.position && v.target,
-            );
+            // Shared-link starting viewpoint wins; else the first derived
+            // viewpoint; else splat-bounds fallback, else default camera.
+            const vps = manifest.viewpoints ?? [];
+            const vp = (initialViewpointId
+              ? vps.find((v) => v.id === initialViewpointId && v.position && v.target)
+              : undefined) ?? vps.find((v) => v.position && v.target);
             if (vp?.position && vp?.target) {
               camera.position.copy(toWorld(vp.position));
               controls.target.copy(toWorld(vp.target));

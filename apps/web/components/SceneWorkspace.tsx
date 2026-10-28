@@ -12,7 +12,7 @@ interface Viewpoint {
 }
 
 /** Client workspace: viewer + assistant share the camera-command path. */
-export default function SceneWorkspace({ sceneId }: { sceneId: string }) {
+export default function SceneWorkspace({ sceneId, initialViewpointId }: { sceneId: string; initialViewpointId?: string }) {
   const viewerRef = useRef<ViewerHandle>(null);
   const [touring, setTouring] = useState(false);
 
@@ -52,7 +52,7 @@ export default function SceneWorkspace({ sceneId }: { sceneId: string }) {
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-auto p-6 lg:flex-row">
       <div className="min-h-96 flex-1 rounded-md border border-neutral-800">
-        <SceneViewer ref={viewerRef} sceneId={sceneId} />
+        <SceneViewer ref={viewerRef} sceneId={sceneId} initialViewpointId={initialViewpointId} />
       </div>
       <aside className="flex w-full max-w-sm flex-col gap-4">
         <button

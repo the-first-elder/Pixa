@@ -2,14 +2,22 @@ import { notFound } from 'next/navigation';
 import CoverageBadge from '@/components/CoverageBadge';
 import JobStatus from '@/components/JobStatus';
 import SceneWorkspace from '@/components/SceneWorkspace';
+import SharePanel from '@/components/SharePanel';
 import { getScene, latestJobForScene } from '@/lib/store';
 
 /**
  * Scene workspace shell. Stage 1 mounts the real Spark viewer here driven by
  * the scene manifest; Stages 3–7 add explorer / assistant / evidence panels.
  */
-export default async function ScenePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ScenePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ v?: string }>;
+}) {
   const { id } = await params;
+  const { v } = await searchParams;
   const scene = getScene(id);
   if (!scene) notFound();
   const job = latestJobForScene(id);
@@ -30,7 +38,12 @@ export default async function ScenePage({ params }: { params: Promise<{ id: stri
             <JobStatus jobId={job.id} />
           </div>
         )}
-        <SceneWorkspace sceneId={id} />
+        {(!job || job.status === 'ready') && (
+          <div className="px-6 pt-4">
+            <SharePanel sceneId={id} />
+          </div>
+        )}
+        <SceneWorkspace sceneId={id} initialViewpointId={typeof v === 'string' ? v : undefined} />
       </div>
     </main>
   );
