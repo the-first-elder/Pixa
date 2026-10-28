@@ -57,7 +57,7 @@ export default function Home() {
             <Reveal delay={260}>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link
-                  href={DEMO_SCENE}
+                  href="/capture"
                   className="rounded-md bg-[#e2a63b] px-6 py-3 text-sm font-medium text-black transition-transform hover:scale-[1.03]"
                 >
                   Explore Pixa
@@ -70,7 +70,11 @@ export default function Home() {
                 </Link>
               </div>
               <p className="mt-4 text-xs text-neutral-500">
-                Opens a real reconstructed living room — no sign-up.
+                Create your own world — or{' '}
+                <Link href={DEMO_SCENE} className="underline underline-offset-4 hover:text-neutral-300">
+                  open a real reconstructed living room
+                </Link>{' '}
+                with no sign-up.
               </p>
             </Reveal>
           </div>
@@ -283,16 +287,16 @@ export default function Home() {
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <Link
-                href={DEMO_SCENE}
+                href="/capture"
                 className="rounded-md bg-[#e2a63b] px-6 py-3 text-sm font-medium text-black transition-transform hover:scale-[1.03]"
               >
                 Explore Pixa
               </Link>
               <Link
-                href="/capture"
+                href={DEMO_SCENE}
                 className="rounded-md border border-neutral-700 px-6 py-3 text-sm text-neutral-200 transition-colors hover:border-neutral-400"
               >
-                Capture your own space
+                View the demo world
               </Link>
             </div>
           </Reveal>
