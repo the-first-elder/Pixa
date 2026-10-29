@@ -1,19 +1,21 @@
-"""Completion emails for reconstruction jobs (Resend API, stdlib only).
+"""Completion emails for reconstruction jobs (Brevo API, stdlib only).
 
 Called once per terminal transition (ready/failed) from store.transition.
 Design constraints, all deliberate:
 - Idempotent: job["emailNotified"][status] is stamped BEFORE sending, so a
   retry/crash never double-mails. At-most-once by construction.
 - Never fails a job: every error path logs to stderr and returns False.
-- No new dependencies: urllib to api.resend.com, nothing to pip-install.
-- Disabled by default: without RESEND_API_KEY it logs once and returns.
+- No new dependencies: urllib to api.brevo.com, nothing to pip-install.
+- Disabled by default: without BREVO_API_KEY it logs once and returns.
 - Legacy-safe: jobs without ownerId, owners without email, and the dry-run
   flag (EMAIL_DRY_RUN=1 renders + validates without sending) all skip cleanly.
 
 Env:
-  RESEND_API_KEY  live or test key (required to send)
-  EMAIL_FROM      e.g. "Pixa <worlds@pixa.example>" (required to send)
-  APP_URL         public base for scene links (default http://localhost:3000)
+  BREVO_API_KEY  xkeysib-... key (required to send)
+  EMAIL_FROM     sender address, e.g. worlds@yourdomain.com — must be a
+                 verified sender in Brevo (required to send)
+  EMAIL_FROM_NAME display name, default "Pixa"
+  APP_URL        public base for scene links (default http://localhost:3000)
   EMAIL_DRY_RUN=1 render only, mark nothing, always return True
 """
 import json
@@ -99,26 +101,39 @@ def render(job: dict[str, Any], email: str, name: str | None) -> tuple[str, str]
     return subject, html
 
 
-def _send(to: str, subject: str, html: str) -> bool:
-    api_key = os.environ.get("RESEND_API_KEY")
+def _send(to: str, subject: str, html: str, name: str | None = None) -> bool:
+    api_key = os.environ.get("BREVO_API_KEY")
     sender = os.environ.get("EMAIL_FROM")
     if not api_key or not sender:
-        print("[notify] email disabled (set RESEND_API_KEY + EMAIL_FROM)", file=sys.stderr)
+        print("[notify] email disabled (set BREVO_API_KEY + EMAIL_FROM)", file=sys.stderr)
         return False
+    payload: dict[str, Any] = {
+        "sender": {"name": os.environ.get("EMAIL_FROM_NAME", "Pixa"), "email": sender},
+        "to": [{"email": to, **({"name": name} if name else {})}],
+        "subject": subject,
+        "htmlContent": html,
+    }
     req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=json.dumps({"from": sender, "to": [to], "subject": subject, "html": html}).encode(),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(payload).encode(),
+        headers={"api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as res:
-            ok = 200 <= res.status < 300
+            ok = res.status in (200, 201, 202)
             if not ok:
-                print(f"[notify] resend HTTP {res.status}", file=sys.stderr)
+                print(f"[notify] brevo HTTP {res.status}", file=sys.stderr)
             return ok
     except Exception as e:  # noqa: BLE001 — email must never fail a job
-        print(f"[notify] send failed: {type(e).__name__}: {str(e)[:150]}", file=sys.stderr)
+        detail = ""
+        read = getattr(e, "read", None)
+        if callable(read):
+            try:
+                detail = f" {read().decode()[:150]}"
+            except Exception:  # noqa: BLE001
+                pass
+        print(f"[notify] send failed: {type(e).__name__}: {str(e)[:100]}{detail}", file=sys.stderr)
         return False
 
 
@@ -146,7 +161,7 @@ def send(email: str, name: str | None, job: dict[str, Any]) -> bool:
         print(f"[notify] dry-run: would mail {email} re: {subject}")
         return True
     subject, html = render(job, email, name)
-    ok = _send(email, subject, html)
+    ok = _send(email, subject, html, name)
     if ok:
         print(f"[notify] mailed {email} ({job.get('status')} {job.get('id')})")
     return ok
