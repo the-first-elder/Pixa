@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.pixa.caffeinate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>-s</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/pixa-caffeinate.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/pixa-caffeinate.log</string>
+</dict>
+</plist>
+<!--
+  Prevents idle sleep (-i) and AC-powered system sleep (-s) while loaded.
+  Does NOT prevent lid-close sleep: keep the lid open (or docked with
+  "prevent sleeping when display is off"). If the Mac sleeps, tunnel +
+  server pause and the public URL goes down until wake.
+-->

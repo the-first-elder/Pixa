@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.pixa.server</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/thefirstelder/Documents/Pixa/apps/web</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STORAGE_DIR</key>
+    <string>/Users/thefirstelder/Documents/Pixa/data</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>exec npx next start --port 3000</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/pixa-prod.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/pixa-prod.log</string>
+</dict>
+</plist>
