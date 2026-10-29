@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import ChunkedUpload, { BIG_FILE } from "@/components/ChunkedUpload";
 import SignInModal from "@/components/SignInModal";
+import UploadBar from "@/components/UploadBar";
 import { stashFile, unstashFile } from "@/lib/file-stash";
 
 /**
@@ -27,6 +28,7 @@ export default function UploadForm() {
     quality === "full" ? 30000 : quality === "balanced" ? 15000 : 7000;
   const [error, setError] = useState<string | null>(null);
   const [bigFile, setBigFile] = useState<File | null>(null);
+  const [hasFile, setHasFile] = useState(false);
   const [restored, setRestored] = useState(false);
   const [qualityWarning, setQualityWarning] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
@@ -40,6 +42,7 @@ export default function UploadForm() {
       dt.items.add(file);
       fileRef.current.files = dt.files;
       if (file.size > BIG_FILE) setBigFile(file);
+      setHasFile(true);
       setRestored(true);
     });
     return () => {
@@ -168,10 +171,12 @@ export default function UploadForm() {
           type="file"
           accept="video/mp4,video/quicktime,.mp4,.mov"
           className="mt-1 w-full text-sm"
-          onChange={() => {
-            const f = fileRef.current?.files?.[0] ?? null;
-            setBigFile(f && f.size > BIG_FILE ? f : null);
-          }}
+        onChange={() => {
+          const f = fileRef.current?.files?.[0] ?? null;
+          setBigFile(f && f.size > BIG_FILE ? f : null);
+          setHasFile(f !== null);
+          if (f) setRestored(false);
+        }}
         />
       </div>
       {bigFile && (
@@ -192,14 +197,7 @@ export default function UploadForm() {
           {qualityWarning}
         </p>
       )}
-      {phase === "uploading" && (
-        <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
-          <div
-            className="h-full bg-white transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      )}
+      {phase === "uploading" && <UploadBar progress={progress} />}
       <div>
         <label htmlFor="backend" className="text-sm text-neutral-400">
           Reconstruction backend
@@ -255,13 +253,22 @@ export default function UploadForm() {
         </p>
       )}
       {error && <p className="text-sm text-red-400">{error}</p>}
-      <button
-        type="submit"
-        disabled={busy}
-        className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
-      >
-        Upload and reconstruct
-      </button>
+      {bigFile ? (
+        <p className="text-xs text-neutral-400">
+          Large file selected — use the resumable upload above (it survives
+          refreshes and dropped connections). The button below is for files
+          under {Math.round(BIG_FILE / 1048576)} MB.
+        </p>
+      ) : (
+        <button
+          type="submit"
+          disabled={busy || !hasFile}
+          title={hasFile ? undefined : 'Select a video file first'}
+          className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Upload and reconstruct
+        </button>
+      )}
       <SignInModal
         open={signInOpen}
         onClose={() => setSignInOpen(false)}

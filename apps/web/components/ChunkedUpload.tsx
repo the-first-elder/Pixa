@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { stashFile } from '@/lib/file-stash';
 import SignInModal from './SignInModal';
+import UploadBar from './UploadBar';
 
 const CHUNK = 8 * 1024 * 1024;
 const BIG_FILE = 50 * 1024 * 1024;
@@ -121,9 +122,7 @@ export default function ChunkedUpload({ file, name }: { file: File; name: string
       )}
       {phase === 'uploading' && (
         <div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
-            <div className="h-full bg-white transition-all" style={{ width: `${progress}%` }} />
-          </div>
+          <UploadBar progress={progress} />
           <div className="mt-2 flex items-center gap-3">
             <p className="text-sm text-neutral-500">Uploading… {progress}% (refresh-safe)</p>
             <button type="button" onClick={() => { stopRef.current = true; }} className="text-xs text-neutral-400 underline">

@@ -9,6 +9,7 @@ import { CompassDial, useCoverageCompass, useDeviceTilt } from './CoverageCompas
 import CaptureReportView from './CaptureReportView';
 import DirectorOverlay from './DirectorOverlay';
 import SignInModal from './SignInModal';
+import UploadBar from './UploadBar';
 
 type Phase = 'idle' | 'preview' | 'recording' | 'review' | 'uploading' | 'error';
 
@@ -881,12 +882,7 @@ export default function CaptureRecorder() {
       )}
       {phase === 'uploading' && (
         <div className="mt-3">
-          <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
-            <div
-              className="h-full bg-white transition-all"
-              style={{ width: `${uploadProgress ?? 0}%` }}
-            />
-          </div>
+          <UploadBar progress={uploadProgress ?? 0} />
           <p className="mt-1 text-sm text-neutral-500">
             Uploading… {uploadProgress ?? 0}%{uploadProgress === 100 && ' — starting reconstruction…'}
           </p>
