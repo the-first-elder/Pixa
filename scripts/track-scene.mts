@@ -298,4 +298,29 @@ for (const m of sample) {
   if (existsSync(src) && !existsSync(dest)) copyFileSync(src, dest);
 }
 console.log(`entities: ${fresh.length} fresh tracked instances (+${kept.length} kept), evidence frames sampled: ${sample.length}`);
-console.log('Next: npx tsx scripts/register-entities.mts --scene ' + sceneId);
+
+// Finish the index in the same run: register positions, derive navigation
+// viewpoints, level the world, compute coverage. All local + free; each is
+// best-effort (a scene without poses still gets labels + evidence). This
+// closes the "assistant is blind on a rendered scene" gap structurally —
+// previously these were manual steps that could be (and were) skipped.
+{
+  const { execFileSync: ex } = await import('node:child_process');
+  const steps: [string, string[]][] = [
+    ['register', ['npx', 'tsx', 'scripts/register-entities.mts', '--scene', sceneId]],
+    ['viewpoints', ['npx', 'tsx', 'scripts/derive-viewpoints.mts', '--scene', sceneId]],
+    ['level-world', ['python3', 'scripts/level-world.py', '--scene', sceneId]],
+    ['coverage', ['npx', 'tsx', 'scripts/coverage.mts', '--scene', sceneId]],
+  ];
+  for (const [label, cmd] of steps) {
+    try {
+      const out = ex(cmd[0], cmd.slice(1), { cwd: root, encoding: 'utf8' }) as string;
+      const last = out.trim().split('\n').slice(-1)[0] ?? '';
+      console.log(`  auto-${label}: ${last.slice(0, 100)}`);
+    } catch (e) {
+      const msg = (e as { stdout?: string; message?: string }).stdout ?? (e as Error).message ?? '';
+      console.log(`  auto-${label}: skipped (${msg.trim().split('\n').slice(-1)[0]?.slice(0, 100) ?? 'no poses'} )`);
+    }
+  }
+  console.log('index complete: entities + positions + viewpoints + level + coverage');
+}

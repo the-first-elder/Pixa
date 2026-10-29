@@ -41,3 +41,23 @@ body {
     animation: none;
   }
 }
+
+/* Asset loading shimmer: a light band sweeping the progress bar. */
+@keyframes pixa-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.load-shimmer {
+  animation: pixa-shimmer 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .load-shimmer {
+    animation: none;
+  }
+}

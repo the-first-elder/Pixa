@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import type * as THREE from 'three';
+import AssetLoader from './AssetLoader';
 
 export interface CameraCommand {
   type: 'tween';
@@ -59,6 +60,8 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
   const highlightRef = useRef<(positions: [number, number, number][]) => number>(() => 0);
   const [status, setStatus] = useState<ViewerStatus>('loading-manifest');
   const [detail, setDetail] = useState<string>('');
+  const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [parsing, setParsing] = useState(false);
   const [mode, setModeState] = useState<ViewerMode>('orbit');
   const [meshReady, setMeshReady] = useState(false);
   const modeRef = useRef<ViewerMode>('orbit');
@@ -289,10 +292,47 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         window.addEventListener('pointermove', onPointerMove);
         window.addEventListener('pointerup', onPointerUp);
 
+        // Download with progress first (SplatMesh gives no byte signal):
+        // stream the asset, report MB as they land, then hand Spark a
+        // blob URL. API URLs carry no file extension — declare the format
+        // explicitly instead of relying on URL sniffing.
+        const assetRes = await fetch(manifest.asset.location);
+        if (!assetRes.ok || !assetRes.body) {
+          throw new Error(`Asset download failed (${assetRes.status})`);
+        }
+        const total = Number(assetRes.headers.get('content-length') || 0);
+        const reader = assetRes.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let loaded = 0;
+        let lastUi = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (cancelled) {
+            reader.cancel().catch(() => {});
+            return;
+          }
+          chunks.push(value);
+          loaded += value.length;
+          const now = performance.now();
+          if (now - lastUi > 120) {
+            lastUi = now;
+            if (!cancelled) setLoadProgress({ loaded, total });
+          }
+        }
+        if (!cancelled) setLoadProgress({ loaded, total });
+        const blobUrl = URL.createObjectURL(
+          new Blob(chunks as BlobPart[], { type: 'application/octet-stream' }),
+        );
+        const revokeBlob = () => URL.revokeObjectURL(blobUrl);
+        if (cancelled) {
+          revokeBlob();
+          return;
+        }
+        setParsing(true); // bytes landed; geometry build has no signal
+
         const mesh = new SplatMesh({
-          url: manifest.asset.location,
-          // API URLs carry no file extension — declare the format explicitly
-          // instead of relying on URL sniffing.
+          url: blobUrl,
           fileType:
             manifest.asset.format === 'spz'
               ? SplatFileType.SPZ
@@ -516,6 +556,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         window.addEventListener('resize', resize);
 
         cleanup = () => {
+          revokeBlob();
           cancelAnimationFrame(raf);
           window.removeEventListener('resize', resize);
           window.removeEventListener('keydown', onKeyDown);
@@ -547,11 +588,10 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
 
   return (
     <div ref={mountRef} className="relative h-full min-h-96 w-full bg-black">
-      {status !== 'ready' && (
+      {status !== 'ready' && status !== 'loading-asset' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
           <p className="px-6 text-center text-sm text-neutral-500">
             {status === 'loading-manifest' && 'Loading scene…'}
-            {status === 'loading-asset' && 'Loading 3D asset…'}
             {status === 'empty' && 'Reconstruction in progress — follow the timer above.'}
             {status === 'error' && `Viewer error: ${detail}`}
           </p>
@@ -560,6 +600,15 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
               <div className="h-full w-1/3 animate-pulse bg-white/70" />
             </div>
           )}
+        </div>
+      )}
+      {status === 'loading-asset' && (
+        <div className="absolute inset-0">
+          <AssetLoader
+            loaded={loadProgress?.loaded ?? 0}
+            total={loadProgress?.total ?? 0}
+            parsing={parsing}
+          />
         </div>
       )}
       {status === 'ready' && (

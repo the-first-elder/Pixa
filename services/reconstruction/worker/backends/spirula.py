@@ -464,7 +464,6 @@ def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
     }
     jobs[job_id].pop("detail", None)  # live ETA is meaningless once ready
     frames_b = len([f for f in os.listdir(images_dir) if f.endswith(".jpg")]) if os.path.isdir(images_dir) else None
-    finish_notes = _auto_finish(job_id, workdir, asset_path, sparse)
     jobs[job_id]["diagnostics"] = {
         "cameraPosesEstimated": True,
         "framesRegistered": None,
@@ -477,14 +476,29 @@ def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
              if partial else "") +
             "Poses from Spirula SfM (COLMAP-format sparse). "
             "Per-frame registration counts not yet parsed (Stage 3).",
-            *finish_notes,
         ],
     }
     store._save("jobs.json", jobs)
     with open(os.path.join(workdir, "DONE"), "w", encoding="utf-8") as f:
         f.write(asset_path)
-    store.transition(job_id, "compressing", progress=90)
-    return store.transition(job_id, "ready", progress=100)
+    # Mark ready BEFORE the finish steps: the scene is viewable the moment
+    # the asset verifies. level-world/coverage/viewpoints resolve the *ready*
+    # job — running them first guaranteed "No ready job" failures on every
+    # run (measured on scene_0f8f6775). Mesh/viewpoints land minutes later;
+    # the viewer degrades gracefully until they exist.
+    store.transition(job_id, "ready", progress=100)
+    finish_notes = _auto_finish(job_id, workdir, asset_path, sparse)
+    jobs = store._load("jobs.json")
+    if job_id in jobs:
+        notes = (jobs[job_id].get("diagnostics") or {}).get("notes", [])
+        notes.extend(finish_notes)
+        jobs[job_id]["diagnostics"] = {
+            **(jobs[job_id].get("diagnostics") or {}),
+            "notes": notes,
+        }
+        store._save("jobs.json", jobs)
+        return jobs[job_id]
+    return store.get_job(job_id)
 
 
 class SpirulaBackend:
