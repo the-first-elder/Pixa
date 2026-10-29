@@ -133,7 +133,40 @@ def transition(job_id: str, status: str, **fields: Any) -> dict[str, Any]:
         job["errorCode"] = None
         job["errorMessage"] = None
     _save("jobs.json", jobs)
+    if status in ("ready", "failed"):
+        _maybe_email(job_id, job)
     return job
+
+
+def _maybe_email(job_id: str, job: dict[str, Any]) -> None:
+    """Fire-and-forget completion mail. At-most-once, never fails the job.
+
+    Stamp-before-send: the notified flag persists BEFORE sending, so a crash
+    between the two can't double-mail (worst case one mail is lost, never
+    duplicated). A failed send releases the stamp for a later retry.
+    """
+    try:
+        from . import notify as _notify
+        email, name = _notify.recipient(job)
+        if not email:
+            return
+        import os as _os
+        if _os.environ.get("EMAIL_DRY_RUN") == "1":
+            _notify.send(email, name, job)  # render-only, stamps nothing
+            return
+        jobs = _load("jobs.json")
+        if job_id not in jobs:
+            return
+        jobs[job_id].setdefault("emailNotified", {})[job["status"]] = True
+        _save("jobs.json", jobs)
+        if not _notify.send(email, name, job):
+            jobs = _load("jobs.json")
+            if job_id in jobs:
+                jobs[job_id].get("emailNotified", {}).pop(job["status"], None)
+                _save("jobs.json", jobs)
+    except Exception as e:  # noqa: BLE001 — email must never fail a job
+        print(f"[notify] skipped: {type(e).__name__}: {str(e)[:120]}",
+              file=sys.stderr)
 
 
 def update_progress(job_id: str, progress: int | None,
