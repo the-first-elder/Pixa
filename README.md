@@ -40,11 +40,19 @@ Sign in with Google, get a visual **My Worlds** library: searchable, sortable, t
 
 ---
 
-## AI integration: four models, one thin adapter layer
+## AI integration: the Meta models inside Pixa
 
-All Meta Model API access flows through `packages/model-adapters` (single
-config, secrets server-side only, Standard non-contributor models for private
-captures). Three models are live in user-facing flows today:
+Everything AI flows through one door: `packages/model-adapters` talks to
+`https://api.meta.ai/v1`, model IDs live in one config file, secrets never
+leave the server, and private captures use Standard (non-contributor) models —
+your footage never trains Meta's models.
+
+| Model | ID | Where it runs | Billed |
+|---|---|---|---|
+| **Muse Spark 1.3** | `muse-spark-1.3` (Chat Completions) | Assistant, label discovery, capture analysis | $1.25 / 1M in, $4.25 / 1M out |
+| **SAM 3.1** | `sam-3.1` (Responses API) | Detection boxes, video tracks, masks | $2.50 / 1K images, $0.20 / 1K video frames |
+| **Muse Voice Transcribe 1.0** | `muse-voice-transcribe-1.0` | Push-to-talk speech input | $0.18 / audio hour |
+| Muse Image 1.0 | `muse-image-1.0` | Adapter built, not wired into UX yet | — |
 
 ```mermaid
 flowchart LR
@@ -53,24 +61,31 @@ flowchart LR
         SA[SAM 3.1\nsegmentation + tracking]
         VO[Muse Voice Transcribe 1.0\nspeech to text]
     end
+    subgraph Adapter
+        AD[model-adapters\nsingle config, retries,\nofficial SAM parser]
+    end
     subgraph Surfaces
         IDX[Indexing: labels → boxes → tracks]
         AST[Assistant: grounded Q&A + 8 tools]
         VOI[Voice: push-to-talk in,\nspoken answers out]
         CAP[Capture coach: live analysis]
     end
-    SP --> IDX
-    SA --> IDX
-    SP --> AST
-    SA --> AST
-    VO --> VOI
-    SP --> CAP
+    SP --> AD
+    SA --> AD
+    VO --> AD
+    AD --> IDX
+    AD --> AST
+    AD --> VOI
+    AD --> CAP
 ```
 
-- **Spark does the thinking.** It names object categories during indexing, runs the assistant's tool-calling loop (navigate, focus, highlight, route, inspect, compare, measure, calibrate), and analyzes capture check-ins. Every answer cites evidence — entity labels, frame ids — and it says "not captured" when the footage doesn't cover the question.
-- **SAM 3.1 does the seeing.** Boxes for detection, full-clip video tracks for per-instance identity with per-observation confidence. Detection output is never treated as 3D — it only becomes positions through the registration gauntlet below.
-- **Voice does the talking.** Push-to-talk transcribed by Muse Voice Transcribe; answers spoken back via browser speech synthesis. Ask about your space out loud while walking it.
-- **One honest boundary:** there is no Meta text-to-speech in the loop — spoken answers are browser-side synthesis, and the README says so instead of implying otherwise.
+**Spark does the thinking.** It names object categories during indexing (union over probe frames, synonym merging), runs the assistant's tool-calling loop — `navigateToLocation`, `focusOnObject`, `highlightObjects`, `showRoute`, `inspectLocation`, `compareLocations`, `measureObject`, `calibrateScale` — with JSON-schema structured outputs, session memory, and confirm-before-act. Every answer cites evidence (entity labels, frame ids) and says "not captured" when the footage doesn't cover the question. Two things we measured and coded around: Spark reasons first (~300 tokens), so budgets ≤2048 starve the output to `null` (we run 4096 with null guards); and its outputs vary slightly run to run, so registration never trusts a single response (RANSAC + confidence weighting).
+
+**SAM 3.1 does the seeing.** Image mode returns detection boxes for discovery; video mode returns full-clip tracks — stable per-instance IDs with per-observation confidence and compact `one_bit` masks. Track, don't detect: one box-prompted video request replaced up to 256 per-frame calls, cutting indexing from ~$0.64 to ~$0.04 per scene *and* fixing instance association. Hard-won prompt hygiene is baked in: degenerate sub-6px boxes 500 the API (filtered), best-overlap boxes carry IDs across chunks, 16 objects per request max, and mask payloads are base85 that may contain `|` — parsed only with the official `@meta-sam/parser`, never hand-tokenized.
+
+**Voice does the listening.** Push-to-talk records WAV mono PCM, Muse Voice Transcribe returns the text, the assistant answers, and the answer is spoken back — ask about your space out loud while walking it.
+
+**One honest boundary:** there is no Meta text-to-speech in the loop — spoken answers are browser speech synthesis, and this section says so instead of implying otherwise. Same for Muse Image: the adapter is written, but it ships nowhere in the UX today, so it gets no demo slot.
 
 ## Why this wins: the moat is verification
 
