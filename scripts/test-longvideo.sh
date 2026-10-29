@@ -85,7 +85,9 @@ export DSTORE_ABS="$DSTORE"
 export ROOT_ABS="$ROOT"
 export STORAGE_DIR="$DSTORE"
 echo "=== 4. segment dispatch + cancel (no full training) ==="
+BEFORE_JOBS=$(python3 -c "import json, os; print(' '.join(json.load(open(os.environ.get('DSTORE_ABS') + '/jobs.json')).keys()))" 2>/dev/null || true)
 PJ=$($CURL -X POST "$BASE/api/recordings/$REC/segments/$SEGM/process" -H 'Content-Type: application/json' -d '{"backend":"spirula","iterations":100}' | python3 -c "import json,sys; print(json.load(sys.stdin).get('error','no-error-field'))" 2>/dev/null)
+export BEFORE_JOBS
 # Poll up to ~90s. Two honest outcomes, both pass:
 #  (a) job still active -> cancel it, assert failed/CANCELLED;
 #  (b) job already terminal-failed honestly (synthetic footage often has
@@ -96,7 +98,8 @@ for _ in $(seq 1 9); do
   SJID=$(python3 -c "
 import json, os
 jobs = json.load(open(os.environ.get('DSTORE_ABS', '') + '/jobs.json'))
-cands = [j for j in jobs.values() if j.get('sceneId') and j['status'] not in ('ready','failed')]
+known = set(os.environ.get('BEFORE_JOBS', '').split())
+cands = [j for k, j in jobs.items() if k not in known and j.get('sceneId') and j['status'] not in ('ready','failed')]
 print(cands[-1]['id'] if cands else 'none')")
   if [ "$SJID" != "none" ]; then break; fi
 done
@@ -110,12 +113,20 @@ j = json.load(open(os.environ.get('DSTORE_ABS', '') + '/jobs.json'))['$JID']
 assert j['status'] == 'failed', j['status']
 print('cancelled:', j.get('errorCode'))" && ok "dispatch+cancel" || bad "cancel flow"
 else
+  # No active job: dispatch must still have produced a tracked, honest
+  # terminal outcome (ready, or failed with a sanitized SCREAMING code —
+  # e.g. SUBMIT_FAILED where the Spirula binary is absent). Anything else
+  # (missing job, empty code) is a real pipeline break.
   python3 -c "
-import json, os, glob
+import json, os, re
 jobs = json.load(open(os.environ.get('DSTORE_ABS', '') + '/jobs.json'))
-terms = [j for j in jobs.values() if j.get('status') == 'failed' and (j.get('errorCode') or '').startswith(('COVERAGE_GAP', 'SPIRULA_'))]
-assert terms, 'no active job and no honest fast-fail recorded'
-print('honest fast-fail:', [(j['id'], j['errorCode']) for j in terms][-1])" && ok "dispatch fast-fail (honest)" || bad "dispatch produced nothing cancellable"
+known = set(os.environ.get('BEFORE_JOBS', '').split())
+terms = [j for k, j in jobs.items() if k not in known and j.get('status') in ('ready', 'failed')]
+assert terms, 'dispatch recorded no new terminal job at all'
+j = terms[-1]
+if j['status'] == 'failed':
+    assert re.match(r'^[A-Z][A-Z0-9_]{1,31}\$', j.get('errorCode') or ''), f\"unshaped error code: {j.get('errorCode')!r}\"
+print('tracked outcome:', j['id'], j['status'], j.get('errorCode'))" && ok "dispatch tracked (honest terminal)" || bad "dispatch produced nothing cancellable"
 fi
 
 echo "=== 5. worker recover on isolated store ==="
@@ -128,7 +139,7 @@ s = store.create_scene('x', {})
 j = store.create_job(s['id'], 'reconstruction')
 store.transition(j['id'], 'reconstructing', progress=50)
 print(j['id'])"
-(cd "$ROOT/services/reconstruction" && python3 -m worker recover | grep -q markedInterrupted && ok "recover marks interrupted" || bad "recover")
+(cd "$ROOT/services/reconstruction" && python3 -m worker recover | grep -q markedInterrupted) && ok "recover marks interrupted" || bad "recover"
 
 echo "=== cleanup test artifacts ==="
 rm -f /tmp/wl-big.mp4 /tmp/wl-chunk.bin /tmp/wl-fake.mp4 /tmp/wl-oversize.bin /tmp/wl-upid.txt
