@@ -782,6 +782,7 @@ export default function CaptureRecorder() {
           <p className="mb-2 rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
             Pass {pass} ready{passFiles.length > 0 ? ` — ${passFiles.length} earlier pass${passFiles.length === 1 ? '' : 'es'} kept` : ''}.
             Continue uploads this pass alone, or join everything into one complete video.
+            {passFiles.length === 0 && ' Tip for multi-pass: end each pass looking at where the next one will start — shared views are what let the passes merge.'}
           </p>
           {restoredPasses && passFiles.length > 0 && (
             <p className="mb-2 rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
