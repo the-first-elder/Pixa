@@ -79,5 +79,22 @@ expect 404 "owned-private scene read anon" "$BASE/api/scenes/scene_own"
 expect 401 "owned-private PATCH anon" -X PATCH "$BASE/api/scenes/scene_own" -H 'Content-Type: application/json' -d '{"name":"hijack"}'
 expect 404 "owned-private asset anon" "$BASE/api/scenes/scene_own/asset"
 
+# Identity integrity (regression: the jwt fallback once re-identified every
+# request as Auth.js's random internal id). Minted cookies, same secret as
+# the server; cookie flavor follows AUTH_URL like a real client.
+if [ -n "${AUTH_SECRET:-}" ] && command -v npx >/dev/null 2>&1; then
+  SECURE=""
+  case "${AUTH_URL:-}" in https*) SECURE="--secure" ;; esac
+  ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  GOODHDR=$(AUTH_SECRET="$AUTH_SECRET" npx tsx "$ROOT/scripts/mint-session.mts" --uid google:42424242424242424242 $SECURE 2>/dev/null | tr -d '\n')
+  POISONHDR=$(AUTH_SECRET="$AUTH_SECRET" npx tsx "$ROOT/scripts/mint-session.mts" --uid "google:deadbeef-cafe-0000-1111-222233334444" $SECURE 2>/dev/null | tr -d '\n')
+  ME=$(curl -s -H "Cookie: $GOODHDR" "$BASE/api/me")
+  echo "$ME" | grep -q '"uid":"google:42424242424242424242"' && ok "stable numeric identity accepted" || bad "stable identity rejected: $ME"
+  ME2=$(curl -s -H "Cookie: $POISONHDR" "$BASE/api/me")
+  echo "$ME2" | grep -q '"user":null' && ok "poisoned uuid identity rejected" || bad "poisoned identity accepted: $ME2"
+else
+  echo "SKIP identity regression (AUTH_SECRET unset — start server with dummy secret to enable)"
+fi
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

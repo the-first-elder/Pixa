@@ -1,14 +1,19 @@
 # Pixa CI — runs on every push and pull request.
 #
-# What runs here (all free, offline, no GPU, no billing):
+# What runs here (all free, no GPU, no billing):
 # - typecheck: tsc across all workspaces
 # - worker-smoke: python compile + imports + CLI parse of the reconstruction worker
+# - notify-unit: offline notify.py tests (stamp-before-send, fail-closed, skips)
 # - notifications: offline unit tests against an isolated STORAGE_DIR
-# - auth: HTTP auth matrix against a throwaway prod server with dummy creds
+# - auth: HTTP auth matrix + identity regression (stable numeric accepted,
+#   poisoned uuid rejected) against a throwaway prod server with dummy creds
 #   (self-seeding fixtures; never touches real data; 401s fire before AI work)
+# - scenes: CRUD, rename, multi-pass join, delete, ensureUser row — same throwaway
+# - longvideo: chunked uploads, analysis, split/merge, dispatch+cancel, recover
+#   (spawns only a 100-iteration probe; spirula binary absent on Linux so the
+#   backend fails fast and cancel is exercised — full trains stay manual)
 #
 # What does NOT run here (needs this Mac's GPU, real footage, or billed APIs):
-# - scripts/test-longvideo.sh (trainer/GPU + large fixtures)
 # - scripts/index-scene.mts / track-scene.mts / register-entities.mts (Meta API spend)
 # - browser-verified visual checks (screenshots are taken locally pre-commit)
 # Run those manually before release; see docs/long-video-report.md.
@@ -56,6 +61,15 @@ jobs:
       - run: npm ci
       - run: STORAGE_DIR=/tmp/wl-ntest npx tsx scripts/test-notifications.mts
 
+  notify-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: STORAGE_DIR=/tmp/wl-ntest python3 scripts/test-notify.py
+
   auth:
     runs-on: ubuntu-latest
     steps:
@@ -67,11 +81,14 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace apps/web
       - name: Start throwaway server with dummy creds
+        env:
+          AUTH_URL: http://localhost:3000
         run: |
           STORAGE_DIR=/tmp/wl-authtest \
           AUTH_SECRET=dummy-secret-for-ci-only \
           GOOGLE_CLIENT_ID=dummy-ci-id \
           GOOGLE_CLIENT_SECRET=dummy-ci-secret \
+          AUTH_URL=http://localhost:3000 \
           nohup npx next start --port 3000 > /tmp/pixa-ci.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000/api/me > /dev/null && break
@@ -80,7 +97,79 @@ jobs:
           curl -sf http://localhost:3000/api/me
         working-directory: apps/web
       - name: Run auth matrix
+        env:
+          AUTH_SECRET: dummy-secret-for-ci-only
+          AUTH_URL: http://localhost:3000
         run: STORE=/tmp/wl-authtest BASE=http://localhost:3000 bash scripts/test-auth.sh
+
+  scenes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: npm ci
+      - run: npm run build --workspace apps/web
+      - name: Start throwaway server with dummy creds
+        run: |
+          STORAGE_DIR=/tmp/wl-scenes \
+          AUTH_SECRET=dummy-secret-for-ci-only \
+          GOOGLE_CLIENT_ID=dummy-ci-id \
+          GOOGLE_CLIENT_SECRET=dummy-ci-secret \
+          AUTH_URL=http://localhost:3000 \
+          nohup npx next start --port 3000 > /tmp/pixa-ci2.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/api/me > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:3000/api/me
+        working-directory: apps/web
+      - name: Run scenes lifecycle tests
+        env:
+          AUTH_SECRET: dummy-secret-for-ci-only
+          AUTH_URL: http://localhost:3000
+        run: STORE=/tmp/wl-scenes BASE=http://localhost:3000 bash scripts/test-scenes.sh
+
+  longvideo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: npm ci
+      - run: npm run build --workspace apps/web
+      - name: Start throwaway server with dummy creds
+        run: |
+          STORAGE_DIR=/tmp/wl-longvideo \
+          AUTH_SECRET=dummy-secret-for-ci-only \
+          GOOGLE_CLIENT_ID=dummy-ci-id \
+          GOOGLE_CLIENT_SECRET=dummy-ci-secret \
+          AUTH_URL=http://localhost:3000 \
+          nohup npx next start --port 3000 > /tmp/pixa-ci3.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/api/me > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:3000/api/me
+        working-directory: apps/web
+      - name: Run long-video suite
+        env:
+          AUTH_SECRET: dummy-secret-for-ci-only
+          AUTH_URL: http://localhost:3000
+          DSTORE: /tmp/wl-longvideo
+        run: BASE=http://localhost:3000 bash scripts/test-longvideo.sh
 
   # Edge deploy: pushes workers/pixa-proxy to pixa.<account>.workers.dev
   # on every push to main. Requires repo secrets (Settings → Secrets →
@@ -94,7 +183,7 @@ jobs:
   deploy-edge:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
-    needs: [typecheck, worker-smoke, notifications, auth]
+    needs: [typecheck, worker-smoke, notify-unit, notifications, auth, scenes, longvideo]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
