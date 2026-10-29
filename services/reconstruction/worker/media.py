@@ -19,32 +19,59 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         raise MediaError(f"Required binary missing: {cmd[0]}. Install FFmpeg.") from e
 
 
+def _has_audio(path: str) -> bool:
+    """True when the file carries at least one audio stream (best effort)."""
+    p = _run(["ffprobe", "-v", "error", "-select_streams", "a",
+              "-show_entries", "stream=index", "-of", "csv", path])
+    return p.returncode == 0 and bool(p.stdout.strip())
+
+
 def join_videos(inputs: list[str], out_path: str) -> dict[str, Any]:
     """Concatenate capture passes into one video, in order. Stream-copy when
     the passes share codecs (same recorder: no generation loss, seconds);
-    re-encode fallback (libx264 CRF 18) when containers differ. Raises
-    MediaError on failure. The joined file is probed before return."""
+    otherwise ONE normalized re-encode: all passes scaled/padded to the
+    first pass's dimensions and fps (mixed orientations/resolutions merge
+    instead of failing), audio kept only when some pass actually has it
+    (browser captures often ship video-only — `-c:a aac` with no audio
+    stream aborts the encode). Raises MediaError on failure. The joined
+    file is probed before return."""
     if len(inputs) < 2:
         raise MediaError("Join needs at least 2 passes")
+    probed = []
     for p in inputs:
         if not os.path.exists(p):
             raise MediaError(f"Pass file missing: {p}")
-        probe_video(p)  # validate each pass first (format/size/codec)
+        probed.append(probe_video(p))  # validate each pass first
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     list_path = out_path + ".concat.txt"
     with open(list_path, "w", encoding="utf-8") as f:
         for p in inputs:
             # Concat demuxer: single-quoted paths, escape embedded quotes.
             f.write(f"file '{os.path.abspath(p).replace(chr(39), chr(39) + chr(92) + chr(39))}'\n")
+    # Stream-copy only when every pass matches (codec, size, fps) — a
+    # "successful" copy of mismatched passes yields mid-stream resolution
+    # switches that poison downstream frame extraction. Anything else goes
+    # straight to the normalized re-encode.
+    first = (probed[0].get("codec"), probed[0]["width"], probed[0]["height"],
+             probed[0]["fps"])
+    uniform = all((q.get("codec"), q["width"], q["height"], q["fps"]) == first
+                   for q in probed)
     try:
         p = _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-                  "-i", list_path, "-c", "copy", out_path])
+                  "-i", list_path, "-c", "copy", out_path]) if uniform else None
         reencoded = False
-        if p.returncode != 0:
-            # Mixed containers/codecs: pay for one re-encode rather than fail.
-            p = _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-                      "-i", list_path, "-c:v", "libx264", "-crf", "18",
-                      "-preset", "veryfast", "-c:a", "aac", out_path])
+        if not uniform or (p is not None and p.returncode != 0):
+            base = probed[0]
+            w, h, fps = base["width"], base["height"], base["fps"] or 30.0
+            vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                  f"scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,"
+                  f"fps={fps}")
+            audio_args: list[str] = ["-c:a", "aac"] if any(
+                _has_audio(i) for i in inputs) else ["-an"]
+            p = _run(["ffmpeg", "-y", "-v", "error", "-f", "concat",
+                      "-safe", "0", "-i", list_path, "-vf", vf,
+                      "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+                      *audio_args, out_path])
             reencoded = True
         if p.returncode != 0:
             raise MediaError(f"ffmpeg join failed: {p.stderr.strip()[:300]}")

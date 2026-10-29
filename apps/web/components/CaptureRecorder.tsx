@@ -38,6 +38,10 @@ export default function CaptureRecorder() {
   const [scout, setScout] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  const [sceneName, setSceneName] = useState('');
+  const [backend, setBackend] = useState('spirula');
+  const [quality, setQuality] = useState('fast');
+  const [allowPartial, setAllowPartial] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   // Passes kept for a joined upload ("Keep & record another pass").
   const [passFiles, setPassFiles] = useState<File[]>([]);
@@ -462,6 +466,10 @@ export default function CaptureRecorder() {
     setSignInOpen(true);
   }
 
+  const iterationsFor = (q: string) => (q === 'full' ? 30000 : q === 'balanced' ? 15000 : 7000);
+  const defaultName = (passes: number) =>
+    `Guided capture ${new Date().toLocaleString()}${passes > 1 ? ` (${passes} passes)` : ''}`;
+
   async function useRecording() {
     const blob = blobRef.current;
     if (!blob) return;
@@ -481,9 +489,7 @@ export default function CaptureRecorder() {
       const createRes = await fetch('/api/scenes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: pass > 1 ? `Guided capture ${new Date().toLocaleString()} (pass ${pass})` : `Guided capture ${new Date().toLocaleString()}`,
-        }),
+    body: JSON.stringify({ name: sceneName.trim() || defaultName(1) }),
       });
       if (createRes.status === 401) {
         setPhase('review');
@@ -520,7 +526,7 @@ export default function CaptureRecorder() {
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend: 'spirula' }),
+        body: JSON.stringify({ backend, allowPartial, iterations: iterationsFor(quality) }),
       });
       stopStream();
       router.push(`/scenes/${sceneId}`);
@@ -559,7 +565,7 @@ export default function CaptureRecorder() {
       const createRes = await fetch('/api/scenes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: `Guided capture ${new Date().toLocaleString()} (${all.length} passes)` }),
+        body: JSON.stringify({ name: sceneName.trim() || defaultName(all.length) }),
       });
       if (createRes.status === 401) {
         setPhase('review');
@@ -595,7 +601,7 @@ export default function CaptureRecorder() {
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend: 'spirula' }),
+        body: JSON.stringify({ backend, allowPartial, iterations: iterationsFor(quality) }),
       });
       stopStream();
       router.push(`/scenes/${sceneId}`);
@@ -790,6 +796,48 @@ export default function CaptureRecorder() {
             </p>
           )}
           <video src={blobUrl} controls playsInline className="w-full rounded-md bg-black" />
+          <div className="mt-3 grid gap-3 rounded-md border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label htmlFor="capture-scene-name" className="text-xs text-neutral-400">Scene name</label>
+              <input
+                id="capture-scene-name"
+                value={sceneName}
+                onChange={(e) => setSceneName(e.target.value)}
+                placeholder={`Guided capture ${new Date().toLocaleDateString()}`}
+                className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label htmlFor="capture-backend" className="text-xs text-neutral-400">Reconstruction backend</label>
+              <select
+                id="capture-backend"
+                value={backend}
+                onChange={(e) => setBackend(e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
+              >
+                <option value="spirula">Spirula — free, on this machine (recommended)</option>
+                <option value="kiri">KIRI hosted API — spends credits (needs key)</option>
+                <option value="runpod">RunPod cloud GPU — needs pod + asset</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="capture-quality" className="text-xs text-neutral-400">Quality (training time)</label>
+              <select
+                id="capture-quality"
+                value={quality}
+                onChange={(e) => setQuality(e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
+              >
+                <option value="fast">Fast preview — ~7k iterations, minutes</option>
+                <option value="balanced">Balanced — ~15k iterations</option>
+                <option value="full">Full — 30k iterations, best quality (slow)</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-neutral-400 sm:col-span-2">
+              <input type="checkbox" checked={allowPartial} onChange={(e) => setAllowPartial(e.target.checked)} />
+              Train a labeled partial preview if coverage is incomplete
+            </label>
+          </div>
           {report && <CaptureReportView report={report} />}
           <p className="mt-2 text-xs text-neutral-500">
             A passing report helps; it does not guarantee reconstruction. True coverage is established afterwards.
