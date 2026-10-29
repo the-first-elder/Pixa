@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSession } from '@/lib/uploads';
+import { ensureUser } from '@/lib/users';
 import { canCreate, sessionUser } from '@/lib/authz';
 import { clientKey, rateLimit } from '@/lib/ratelimit';
 
@@ -13,6 +14,8 @@ export async function POST(req: NextRequest) {
   if (!canCreate(uid)) {
     return NextResponse.json({ error: 'Sign in to upload.' }, { status: 401 });
   }
+  // Owner row must exist before any record references it (see ensureUser).
+  ensureUser(user);
   if (!rateLimit(`uploads:${clientKey(req, uid)}`, 10, 60_000)) {
     return NextResponse.json({ error: 'Too many upload sessions — slow down.' }, { status: 429 });
   }

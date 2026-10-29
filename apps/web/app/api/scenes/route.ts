@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createScene } from '@/lib/store';
+import { ensureUser } from '@/lib/users';
 import { canCreate, sessionUser } from '@/lib/authz';
 import { clientKey, rateLimit } from '@/lib/ratelimit';
 
@@ -10,6 +11,8 @@ export async function POST(req: NextRequest) {
   if (!canCreate(uid)) {
     return NextResponse.json({ error: 'Sign in to create a scene.' }, { status: 401 });
   }
+  // Owner row must exist before any record references it (see ensureUser).
+  ensureUser(user);
   if (!rateLimit(`scenes:${clientKey(req, uid)}`, 20, 60_000)) {
     return NextResponse.json({ error: 'Too many scene creations — slow down.' }, { status: 429 });
   }

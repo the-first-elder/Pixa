@@ -35,15 +35,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return true;
     },
     async jwt({ token, profile }) {
-      const sub = (profile as { sub?: string } | null)?.sub ?? (token.sub as string | undefined);
+      // profile is present ONLY on the sign-in call. Derive the stable
+      // identity here and never touch it again: on later calls profile is
+      // absent and token.sub is Auth.js's INTERNAL random user id
+      // (crypto.randomUUID by design) — falling back to it silently
+      // re-identifies the user as a random stranger on every session
+      // (measured: a new phantom google:<uuid> owner per login).
+      const sub = (profile as { sub?: string } | null)?.sub;
       if (sub) {
+        token.sub = sub;
         token.uid = `google:${sub}`;
         token.providerSubject = sub;
       }
       return token;
     },
     async session({ session, token }) {
-      (session as { uid?: string }).uid = typeof token.uid === 'string' ? token.uid : '';
+      const uid = typeof token.uid === 'string' ? token.uid : '';
+      // Migration: pre-fix sessions stored Auth.js's random internal id as
+      // the Google subject (google:<uuid>). Google subs are always numeric,
+      // so anything else is a poisoned identity — treat as signed out so
+      // the holder re-authenticates to their stable id (one re-login).
+      (session as { uid?: string }).uid = /^google:\d+$/.test(uid) ? uid : '';
       return session;
     },
   },

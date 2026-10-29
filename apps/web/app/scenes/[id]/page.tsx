@@ -24,6 +24,7 @@ export default async function ScenePage({
   // Server-side check: no flash of protected content before authorization.
   if (!scene || !canRead(scene, user?.uid ?? null)) notFound();
   const job = latestJobForScene(id);
+  const ownerMismatch = Boolean(scene.ownerId && user && scene.ownerId !== user.uid);
 
   return (
     <main className="flex h-screen flex-col">
@@ -33,7 +34,14 @@ export default async function ScenePage({
           {scene.sourceVideo ? 'Source video attached' : 'No video yet'} ·{' '}
           {job ? `job ${job.status}` : 'no processing job'}{' '}
           <CoverageBadge sceneId={id} />
+          {user ? ` · signed in as ${user.email ?? user.name ?? 'you'}` : ''}
         </p>
+        {ownerMismatch && (
+          <p className="mt-1 rounded-md border border-amber-800 bg-amber-950/40 px-2 py-1 text-xs text-amber-300">
+            This world was saved to a different account — you&rsquo;re signed in as {user!.email ?? user!.name ?? 'another account'},
+            so progress and notifications go there, not here.
+          </p>
+        )}
       </header>
       <div className="flex flex-1 flex-col overflow-auto">
         {job && job.status !== 'ready' && (

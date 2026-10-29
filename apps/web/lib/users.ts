@@ -67,3 +67,33 @@ export function upsertUser(input: {
 export function getUser(id: string): User | null {
   return load()[id] ?? null;
 }
+
+/**
+ * Guarantee the session's owner row exists, creating it from the session
+ * profile when absent. Call on every create path (scenes, recordings,
+ * uploads) AFTER auth passes: a record must never reference an owner uid
+ * with no user row, or notifications/mail/My-Worlds silently lose it
+ * (measured: a scene owned by a uid with no row 404'd for its own creator
+ * and skipped completion mail for lack of an address).
+ * Split on the FIRST colon only — providerAccountIds never contain one,
+ * but the uid prefix does.
+ */
+export function ensureUser(session: {
+  uid: string;
+  name: string | null;
+  email: string | null;
+  image: string | null;
+} | null): void {
+  if (!session?.uid) return;
+  const sep = session.uid.indexOf(':');
+  const provider = sep > 0 ? session.uid.slice(0, sep) : 'google';
+  const providerAccountId = sep > 0 ? session.uid.slice(sep + 1) : session.uid;
+  if (!providerAccountId) return;
+  upsertUser({
+    provider,
+    providerAccountId,
+    email: session.email,
+    name: session.name,
+    image: session.image,
+  });
+}

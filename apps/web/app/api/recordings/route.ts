@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 import { createRecording } from '@/lib/recordings';
+import { ensureUser } from '@/lib/users';
 import { canCreate, sessionUser } from '@/lib/authz';
 import { clientKey, rateLimit } from '@/lib/ratelimit';
 import { STORAGE_DIR } from '@/lib/config';
@@ -16,6 +17,8 @@ export async function POST(req: NextRequest) {
   if (!canCreate(uid)) {
     return NextResponse.json({ error: 'Sign in to create a recording.' }, { status: 401 });
   }
+  // Owner row must exist before any record references it (see ensureUser).
+  ensureUser(user);
   if (!rateLimit(`recordings:${clientKey(req, uid)}`, 10, 60_000)) {
     return NextResponse.json({ error: 'Too many recordings — slow down.' }, { status: 429 });
   }
