@@ -84,10 +84,11 @@ def render(job: dict[str, Any], email: str, name: str | None) -> tuple[str, str]
                 f"a problem (<span style=\"color:{MUTED}\">{code}</span>). "
                 f"Your project is saved — open it for details and next steps.")
         cta = "View details"
+    logo = f"{app}/email-logo.png"
     html = f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:{BG};color:{TEXT};font-family:Georgia,'Times New Roman',serif;">
 <div style="max-width:560px;margin:0 auto;padding:32px 24px;">
-<div style="font-size:22px;letter-spacing:-0.5px;">Pixa</div>
+<div><img src="{logo}" width="40" height="40" alt="Pixa" style="display:inline-block;vertical-align:middle;border-radius:9px;"/><span style="font-size:22px;letter-spacing:-0.5px;vertical-align:middle;">&nbsp;Pixa</span></div>
 <div style="margin-top:24px;border:1px solid #262626;border-radius:12px;background:{CARD};padding:28px;">
 <div style="font-size:11px;letter-spacing:3px;color:{ACCENT};">PIXA &middot; YOUR WORLD</div>
 <h1 style="font-size:28px;margin:12px 0 8px;font-weight:normal;">Hi {first},<br/>{headline}</h1>
