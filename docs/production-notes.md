@@ -29,3 +29,12 @@ claim push works until all of the above is configured and tested.
 
 - POST /api/scenes: 20/min, POST /api/uploads + /api/recordings: 10/min
   (per user, else per IP). Move to Redis with multi-instance deploys.
+
+## Go-live wiring (verified 2026-10-29)
+
+- Public URL: `https://pixa.autumn-test.workers.dev` (edge proxy → quick tunnel → `next start` on Mac).
+- Google OAuth client `20964591116-…`: redirect URIs registered for localhost (`http://localhost:3000/api/auth/callback/google`) and public (`https://pixa.autumn-test.workers.dev/api/auth/callback/google`). Login leg verified to Google's account chooser (no `redirect_uri_mismatch`).
+- `AUTH_URL=https://pixa.autumn-test.workers.dev` in server `.env`: the tunnel chain rewrites forwarding headers to the origin, so Auth.js cannot infer the public host — the pinned URL makes every flow complete on the public callback.
+- CI deploy: repo secrets `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` set; `deploy-edge` job redeploys the worker on push to `main`/`dev`.
+- Completion mail: Brevo SMTP, sender verified, `EMAIL_FROM` + `APP_URL` in server `.env`; live-tested end to end.
+- Still manual: quick-tunnel URL rotates on restart → run `scripts/sync-tunnel.sh` (or promote to a named tunnel once the token gains Tunnels:Edit).
