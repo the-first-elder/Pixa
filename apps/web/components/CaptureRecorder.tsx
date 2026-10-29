@@ -39,7 +39,13 @@ export default function CaptureRecorder() {
   const [scout, setScout] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  const [savedCopy, setSavedCopy] = useState(false);
   const [sceneName, setSceneName] = useState('');
+  const [wakeHeld, setWakeHeld] = useState(false);
+  const wakeRef = useRef<{
+    release: () => Promise<void>;
+    addEventListener?: (type: string, cb: () => void) => void;
+  } | null>(null);
   const [backend, setBackend] = useState('spirula');
   const [quality, setQuality] = useState('fast');
   const [allowPartial, setAllowPartial] = useState(false);
@@ -74,6 +80,56 @@ export default function CaptureRecorder() {
   }, [compass]);
 
   useEffect(() => () => stopStream(), []);
+
+  // Screen Wake Lock: recording + upload die when a phone sleeps or the
+  // tab backgrounds (browser suspends camera + network). Hold a lock while
+  // capturing or uploading; re-acquire when the tab becomes visible again.
+  // Unsupported browsers fall back to an on-screen keep-awake reminder.
+  const wakeSupported =
+    typeof navigator !== 'undefined' && 'wakeLock' in navigator;
+  async function holdWake() {
+    if (!wakeSupported || wakeRef.current) return;
+    try {
+      const lock = await (
+        navigator as Navigator & {
+          wakeLock: {
+            request: (t: 'screen') => Promise<{
+              release: () => Promise<void>;
+              addEventListener?: (type: string, cb: () => void) => void;
+            }>;
+          };
+        }
+      ).wakeLock.request('screen');
+      wakeRef.current = lock;
+      lock.addEventListener?.('release', () => {
+        if (wakeRef.current === lock) {
+          wakeRef.current = null;
+          setWakeHeld(false);
+        }
+      });
+      setWakeHeld(true);
+    } catch {
+      /* denied or unavailable — the reminder text below covers it */
+    }
+  }
+  function releaseWake() {
+    wakeRef.current?.release().catch(() => {});
+    wakeRef.current = null;
+    setWakeHeld(false);
+  }
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && (phase === 'recording' || phase === 'uploading' || (phase === 'review' && blobRef.current))) {
+        void holdWake();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      releaseWake();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   // After a sign-in redirect, restore stashed passes (one-shot). Keys are
   // capture-pending-0..N (dense); stops at the first miss, capped at 10.
@@ -297,6 +353,8 @@ export default function CaptureRecorder() {
   function startRecording() {
     const stream = streamRef.current;
     if (!stream) return;
+    void holdWake(); // keep the screen on: sleep kills the recording
+    setSavedCopy(false);
     chunksRef.current = [];
     statsRef.current = [];
     eventsRef.current = [];
@@ -315,6 +373,23 @@ export default function CaptureRecorder() {
       const blob = new Blob(chunksRef.current, { type: recorder.mimeType });
       blobRef.current = blob;
       setBlobUrl(URL.createObjectURL(blob));
+      // Auto-save a copy to the device: each finished pass downloads
+      // immediately, so nothing is ever only-in-the-page.
+      try {
+        const ext = (recorder.mimeType || '').includes('mp4') ? 'mp4' : 'webm';
+        const a = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = `pixa-pass-${pass}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 120000);
+        setSavedCopy(true);
+      } catch {
+        // Download blocked (e.g. permissions) — the review upload still works.
+        setSavedCopy(false);
+      }
       setReport(
         buildReport({
           samples: statsRef.current,
@@ -448,6 +523,7 @@ export default function CaptureRecorder() {
     blobRef.current = null;
     setBlobUrl(null);
     setReport(null);
+    setSavedCopy(false);
     setPhase('preview');
   }
 
@@ -475,6 +551,7 @@ export default function CaptureRecorder() {
     const blob = blobRef.current;
     if (!blob) return;
     setPhase('uploading');
+    void holdWake(); // re-assert: lock may have released between passes
     setUploadProgress(0);
     setError(null);
     try {
@@ -560,6 +637,7 @@ export default function CaptureRecorder() {
     }
     if (all.length < 2) return;
     setPhase('uploading');
+    void holdWake(); // re-assert: lock may have released between passes
     setUploadProgress(0);
     setError(null);
     try {
@@ -627,6 +705,18 @@ export default function CaptureRecorder() {
       <p className="mt-1 text-xs text-neutral-500">
         Record in the browser with live pacing, sharpness, light, and coverage guidance.
       </p>
+      {(phase === 'recording' || phase === 'uploading' || (phase === 'review' && blobUrl)) && (
+        wakeHeld ? (
+          <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-emerald-800 bg-emerald-950/40 px-2.5 py-0.5 text-xs text-emerald-300">
+            <span aria-hidden>🔒</span> Screen awake — recording and upload stay alive
+          </p>
+        ) : (
+          <p className="mt-2 inline-block rounded-full border border-amber-800 bg-amber-950/40 px-2.5 py-0.5 text-xs text-amber-300">
+            Keep this screen on while recording and uploading — sleep or backgrounding stops them
+            {wakeSupported ? ' (waking screen…)' : ' (this browser can’t hold it awake for you)'}.
+          </p>
+        )
+      )}
       {phase === 'idle' && (
         <button
           type="button"
@@ -796,6 +886,11 @@ export default function CaptureRecorder() {
               {passFiles.length} stashed pass{passFiles.length === 1 ? '' : 'es'} restored after sign-in — record more or upload them joined.
             </p>
           )}
+          {savedCopy && (
+            <p className="mb-2 rounded-md border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-300">
+              Saved a copy of this pass to your device — it{passFiles.length > 0 ? ' and your kept passes' : ''} survive even if this tab closes.
+            </p>
+          )}
           <video src={blobUrl} controls playsInline className="w-full rounded-md bg-black" />
           <div className="mt-3 grid gap-3 rounded-md border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
@@ -877,6 +972,22 @@ export default function CaptureRecorder() {
             >
               Discard this pass
             </button>
+            {passFiles.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  discardRecording();
+                  setPassFiles([]);
+                  setPass(1);
+                  setRestoredPasses(false);
+                  releaseWake();
+                }}
+                className="rounded-md border border-neutral-700 px-4 py-2 text-xs text-neutral-500"
+                title="Throw away all kept passes too and start over"
+              >
+                Start over (clears kept passes)
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -885,6 +996,7 @@ export default function CaptureRecorder() {
           <UploadBar progress={uploadProgress ?? 0} />
           <p className="mt-1 text-sm text-neutral-500">
             Uploading… {uploadProgress ?? 0}%{uploadProgress === 100 && ' — starting reconstruction…'}
+            {' '}Keep this tab open and your screen on until it finishes.
           </p>
         </div>
       )}
