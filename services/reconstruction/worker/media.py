@@ -19,6 +19,46 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         raise MediaError(f"Required binary missing: {cmd[0]}. Install FFmpeg.") from e
 
 
+def join_videos(inputs: list[str], out_path: str) -> dict[str, Any]:
+    """Concatenate capture passes into one video, in order. Stream-copy when
+    the passes share codecs (same recorder: no generation loss, seconds);
+    re-encode fallback (libx264 CRF 18) when containers differ. Raises
+    MediaError on failure. The joined file is probed before return."""
+    if len(inputs) < 2:
+        raise MediaError("Join needs at least 2 passes")
+    for p in inputs:
+        if not os.path.exists(p):
+            raise MediaError(f"Pass file missing: {p}")
+        probe_video(p)  # validate each pass first (format/size/codec)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    list_path = out_path + ".concat.txt"
+    with open(list_path, "w", encoding="utf-8") as f:
+        for p in inputs:
+            # Concat demuxer: single-quoted paths, escape embedded quotes.
+            f.write(f"file '{os.path.abspath(p).replace(chr(39), chr(39) + chr(92) + chr(39))}'\n")
+    try:
+        p = _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                  "-i", list_path, "-c", "copy", out_path])
+        reencoded = False
+        if p.returncode != 0:
+            # Mixed containers/codecs: pay for one re-encode rather than fail.
+            p = _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                      "-i", list_path, "-c:v", "libx264", "-crf", "18",
+                      "-preset", "veryfast", "-c:a", "aac", out_path])
+            reencoded = True
+        if p.returncode != 0:
+            raise MediaError(f"ffmpeg join failed: {p.stderr.strip()[:300]}")
+        meta = probe_video(out_path)
+        meta["passes"] = len(inputs)
+        meta["reencoded"] = reencoded
+        return meta
+    finally:
+        try:
+            os.remove(list_path)
+        except OSError:
+            pass
+
+
 def probe_video(path: str, ext_hint: str | None = None) -> dict[str, Any]:
     """Read-only inspection. Writes nothing. Raises MediaError on invalid input."""
     if not os.path.exists(path):

@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { stashFile } from '@/lib/file-stash';
+import { stashFile, unstashFile } from '@/lib/file-stash';
 import { useEffect, useRef, useState } from 'react';
 import { blurScore, brightness, frameDiff, GuideEngine, type CaptureAdvice } from '@/lib/capture-analysis';
 import { buildReport, type CaptureReport, type MetricSample, type WeakMoment } from '@/lib/capture-report';
@@ -39,6 +39,9 @@ export default function CaptureRecorder() {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  // Passes kept for a joined upload ("Keep & record another pass").
+  const [passFiles, setPassFiles] = useState<File[]>([]);
+  const [restoredPasses, setRestoredPasses] = useState(false);
   const [report, setReport] = useState<CaptureReport | null>(null);
   const [resolution, setResolution] = useState<{ w: number; h: number } | null>(null);
   const blobRef = useRef<Blob | null>(null);
@@ -66,6 +69,28 @@ export default function CaptureRecorder() {
   }, [compass]);
 
   useEffect(() => () => stopStream(), []);
+
+  // After a sign-in redirect, restore stashed passes (one-shot). Keys are
+  // capture-pending-0..N (dense); stops at the first miss, capped at 10.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const files: File[] = [];
+      for (let i = 0; i < 10; i++) {
+        const f = await unstashFile(i === 0 ? 'capture-pending' : `capture-pending-${i}`).catch(() => null);
+        if (!f) break;
+        files.push(f);
+      }
+      if (!cancelled && files.length > 0) {
+        setPassFiles(files);
+        setPass(files.length + 1);
+        setRestoredPasses(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Unsaved-recording protection: recording in progress or unreviewed blob.
   useEffect(() => {
@@ -421,6 +446,22 @@ export default function CaptureRecorder() {
     setPhase('preview');
   }
 
+  /** Stash the current blob plus all kept passes, then open sign-in. */
+  async function sendToSignIn(ext: string) {
+    const files: File[] = [...passFiles];
+    if (blobRef.current) files.push(new File([blobRef.current], `capture.${ext}`, { type: blobRef.current.type }));
+    let ok = true;
+    for (let i = 0; i < files.length && i < 10; i++) {
+      ok = (await stashFile(i === 0 ? 'capture-pending' : `capture-pending-${i}`, files[i])) && ok;
+    }
+    if (!ok) {
+      setError('Please sign in, then select your video again.');
+      setPhase('error');
+      return;
+    }
+    setSignInOpen(true);
+  }
+
   async function useRecording() {
     const blob = blobRef.current;
     if (!blob) return;
@@ -446,13 +487,7 @@ export default function CaptureRecorder() {
       });
       if (createRes.status === 401) {
         setPhase('review');
-        const file = new File([blob], `capture.${ext}`, { type: blob.type });
-        const ok = await stashFile('capture-pending', file);
-        if (!ok) {
-          setError('Please sign in, then select your video again.');
-          return;
-        }
-        setSignInOpen(true);
+        await sendToSignIn(ext);
         return;
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
@@ -480,6 +515,81 @@ export default function CaptureRecorder() {
         xhr.onerror = () => reject(new Error('Upload connection failed'));
         const form = new FormData();
         form.append('video', blob, `capture.${ext}`);
+        xhr.send(form);
+      });
+      await fetch(`/api/scenes/${sceneId}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend: 'spirula' }),
+      });
+      stopStream();
+      router.push(`/scenes/${sceneId}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upload failed');
+      setUploadProgress(null);
+      setPhase('review');
+    }
+  }
+
+  /** Keep the current recording and go again — passes join into one video. */
+  function keepPassAndRecord() {
+    const blob = blobRef.current;
+    if (!blob) return;
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    setPassFiles((prev) => [...prev, new File([blob], `capture-pass-${pass}.${ext}`, { type: blob.type })]);
+    discardRecording();
+    setPass((p) => p + 1);
+    setPhase('preview');
+    startPreview();
+  }
+
+  /** Upload all kept passes + the current recording as ONE joined scene. */
+  async function useJoinedRecording() {
+    const blob = blobRef.current;
+    const all = [...passFiles];
+    if (blob) {
+      const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+      all.push(new File([blob], `capture-pass-${pass}.${ext}`, { type: blob.type }));
+    }
+    if (all.length < 2) return;
+    setPhase('uploading');
+    setUploadProgress(0);
+    setError(null);
+    try {
+      const createRes = await fetch('/api/scenes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: `Guided capture ${new Date().toLocaleString()} (${all.length} passes)` }),
+      });
+      if (createRes.status === 401) {
+        setPhase('review');
+        await sendToSignIn('mp4');
+        return;
+      }
+      if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
+      const { sceneId } = (await createRes.json()) as { sceneId: string };
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/scenes/${sceneId}/passes`);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setUploadProgress(100);
+            resolve();
+          } else {
+            try {
+              const body = JSON.parse(xhr.responseText) as { error?: string };
+              reject(new Error(body.error ?? `Pass upload failed (${xhr.status})`));
+            } catch {
+              reject(new Error(`Pass upload failed (${xhr.status})`));
+            }
+          }
+        };
+        xhr.onerror = () => reject(new Error('Upload connection failed'));
+        const form = new FormData();
+        all.forEach((f, i) => form.append(`pass-${i}`, f, f.name));
         xhr.send(form);
       });
       await fetch(`/api/scenes/${sceneId}/process`, {
@@ -670,9 +780,14 @@ export default function CaptureRecorder() {
       {phase === 'review' && blobUrl && (
         <div className="mt-3">
           <p className="mb-2 rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
-            Pass {pass} ready — each pass uploads as its own separate scene.
-            Only passes you Continue get saved{pass > 1 ? '; starting a new pass discards this recording' : ''}.
+            Pass {pass} ready{passFiles.length > 0 ? ` — ${passFiles.length} earlier pass${passFiles.length === 1 ? '' : 'es'} kept` : ''}.
+            Continue uploads this pass alone, or join everything into one complete video.
           </p>
+          {restoredPasses && passFiles.length > 0 && (
+            <p className="mb-2 rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
+              {passFiles.length} stashed pass{passFiles.length === 1 ? '' : 'es'} restored after sign-in — record more or upload them joined.
+            </p>
+          )}
           <video src={blobUrl} controls playsInline className="w-full rounded-md bg-black" />
           {report && <CaptureReportView report={report} />}
           <p className="mt-2 text-xs text-neutral-500">
@@ -683,26 +798,34 @@ export default function CaptureRecorder() {
               type="button"
               onClick={useRecording}
               className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black"
+              title="Upload only this pass as its own scene"
             >
               Continue with this recording
             </button>
+            {passFiles.length > 0 && (
+              <button
+                type="button"
+                onClick={useJoinedRecording}
+                className="rounded-md bg-[#e2a63b] px-4 py-2 text-sm font-medium text-black"
+                title="Join all kept passes in order into one video and one scene"
+              >
+                Upload {passFiles.length + 1} passes as one video
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => {
-                discardRecording();
-                setPass((p) => p + 1);
-              }}
+              onClick={keepPassAndRecord}
               className="rounded-md border border-neutral-700 px-4 py-2 text-sm"
-              title="Start a new pass (separate reconstruction)"
+              title="Keep this pass and film the parts you missed — everything joins into one video"
             >
-              Record missing areas (new pass)
+              Keep &amp; record missing areas (pass {pass + 1})
             </button>
             <button
               type="button"
               onClick={discardRecording}
               className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-neutral-400"
             >
-              Discard and restart
+              Discard this pass
             </button>
           </div>
         </div>

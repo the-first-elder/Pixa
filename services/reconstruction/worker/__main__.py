@@ -40,6 +40,16 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_join(args: argparse.Namespace) -> int:
+    try:
+        meta = media.join_videos(args.inputs, args.out)
+    except media.MediaError as e:
+        print(f"FAILED: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(meta, indent=2))
+    return 0
+
+
 def execute_job(job_id: str, video: str, backend_name: str,
                 asset: str | None = None, poses: str | None = None,
                 allow_spend: bool = False, iterations: int = 30000,
@@ -430,6 +440,10 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--pipeline", choices=["A", "B"], required=True)
     e.add_argument("--fps", type=float, default=None, help="Override pipeline B fps (adaptive per-segment sampling)")
     e.set_defaults(fn=cmd_extract)
+    jn = sub.add_parser("join", help="Concatenate capture passes into one video, in order")
+    jn.add_argument("inputs", nargs="+", help="Pass videos in order (validated first)")
+    jn.add_argument("--out", required=True)
+    jn.set_defaults(fn=cmd_join)
     r = sub.add_parser("process", help="Run a full reconstruction job")
     r.add_argument("video")
     r.add_argument("--name", default="Untitled scene")
