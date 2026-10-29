@@ -186,7 +186,6 @@ export default function UploadForm() {
           className="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
         >
           <option value="spirula">Spirula — free, on this machine (recommended)</option>
-          <option value="local">Local FFmpeg+COLMAP — needs colmap binary</option>
           <option value="kiri">KIRI hosted API — spends credits (needs key)</option>
           <option value="runpod">RunPod cloud GPU — needs pod + asset</option>
         </select>
