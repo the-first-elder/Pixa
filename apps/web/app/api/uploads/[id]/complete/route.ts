@@ -15,6 +15,12 @@ import { workerDir } from '@/lib/worker';
  * Streams for hashing — the assembled video is never loaded into memory.
  * A failed upload never enters the pipeline (no scene/job is created here).
  */
+function extOf(filename: string): '.mp4' | '.mov' | '.webm' {
+  const n = filename.toLowerCase();
+  if (n.endsWith('.mov')) return '.mov';
+  if (n.endsWith('.webm')) return '.webm';
+  return '.mp4';
+}
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -52,7 +58,7 @@ export async function POST(
   try {
     execFileSync(
       'python3',
-      ['-m', 'worker', 'probe', s.tmpPath, '--ext', s.filename.toLowerCase().endsWith('.mov') ? '.mov' : '.mp4'],
+      ['-m', 'worker', 'probe', s.tmpPath, '--ext', extOf(s.filename)],
       {
         cwd: workerDir(),
         stdio: 'pipe',
@@ -63,7 +69,7 @@ export async function POST(
     const stderr = (e as { stderr?: Buffer }).stderr?.toString().slice(0, 300) ?? 'probe failed';
     return NextResponse.json({ error: `Uploaded file rejected: ${stderr}` }, { status: 422 });
   }
-  const ext = s.filename.toLowerCase().endsWith('.mov') ? '.mov' : '.mp4';
+  const ext = extOf(s.filename);
   const destDir = join(STORAGE_DIR, 'uploads', `upload_${s.id}`);
   mkdirSync(destDir, { recursive: true });
   const dest = join(destDir, `original${ext}`);

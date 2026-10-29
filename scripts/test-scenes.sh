@@ -43,6 +43,11 @@ ffmpeg -v error -y -f lavfi -i testsrc=size=320x240:rate=30:duration=2 -pix_fmt 
 ffmpeg -v error -y -f lavfi -i testsrc=size=320x240:rate=30:duration=3 -pix_fmt yuv420p -c:v libx264 /tmp/wl-s2.mp4
 JR=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID/passes" -F "pass-0=@/tmp/wl-s1.mp4;type=video/mp4" -F "pass-1=@/tmp/wl-s2.mp4;type=video/mp4")
 echo "$JR" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('passes')==2, d; print('joined duration:', d['probe']['duration'])" && ok "join 2 passes" || bad "passes join: $JR"
+# 4b. mixed container/codec/size + silent webm forces the normalized re-encode
+ffmpeg -v error -y -f lavfi -i testsrc=size=160x120:rate=25:duration=2 -pix_fmt yuv420p -c:v vp9 -an /tmp/wl-s3.webm
+JR3=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID/passes" -F "pass-0=@/tmp/wl-s1.mp4;type=video/mp4" -F "pass-1=@/tmp/wl-s3.webm;type=video/webm")
+echo "$JR3" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('passes')==2 and d.get('reencoded') is True, d; print('mixed join re-encoded:', d['probe']['duration'])" && ok "join mixed mp4+webm (re-encode)" || bad "mixed join: $JR3"
+rm -f /tmp/wl-s3.webm
 
 # 5. single pass rejected
 JR1=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID/passes" -F "pass-0=@/tmp/wl-s1.mp4;type=video/mp4")

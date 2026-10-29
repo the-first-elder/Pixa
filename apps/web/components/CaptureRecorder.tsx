@@ -547,6 +547,46 @@ export default function CaptureRecorder() {
   const defaultName = (passes: number) =>
     `Guided capture ${new Date().toLocaleString()}${passes > 1 ? ` (${passes} passes)` : ''}`;
 
+  /** XHR upload with one automatic retry on connection loss (mobile networks
+   * drop mid-upload; the scene endpoints are idempotent per scene, and a
+   * second identical pass-set simply rejoins deterministically). */
+  function uploadXhr(url: string, form: FormData, label: string): Promise<void> {
+    const attempt = () =>
+      new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setUploadProgress(100);
+            resolve();
+          } else {
+            let message = `${label} (${xhr.status})`;
+            try {
+              const body = JSON.parse(xhr.responseText) as { error?: string };
+              if (body.error) message = body.error;
+            } catch {
+              /* keep generic message */
+            }
+            const err = new Error(message) as Error & { status?: number };
+            err.status = xhr.status;
+            reject(err);
+          }
+        };
+        xhr.onerror = () => reject(new Error('Upload connection failed'));
+        xhr.send(form);
+      });
+    return attempt().catch(async (e: unknown) => {
+      const transient =
+        e instanceof Error && (/connection failed/i.test(e.message) || (e as { status?: number }).status === 0 || /networkerror|failed to fetch|econnreset|socket/i.test(e.message));
+      if (!transient) throw e;
+      await new Promise((r) => setTimeout(r, 3000));
+      return attempt();
+    });
+  }
+
   async function useRecording() {
     const blob = blobRef.current;
     if (!blob) return;
@@ -555,15 +595,9 @@ export default function CaptureRecorder() {
     setUploadProgress(0);
     setError(null);
     try {
+      // mp4 and webm both flow into the pipeline (ffmpeg reads both natively;
+      // the server validates codec and container on arrival).
       const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
-      // Pipeline accepts mp4/mov; convert webm server-side if needed is
-      // future work — for now require mp4, else fall back to file upload.
-      if (ext !== 'mp4') {
-        throw new Error(
-          'This browser recorded WebM, which the pipeline does not accept yet. ' +
-            'Please upload an MP4/MOV file instead (or use a Chromium browser).',
-        );
-      }
       const createRes = await fetch('/api/scenes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -576,31 +610,9 @@ export default function CaptureRecorder() {
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
-      // XHR (not fetch) so the upload reports progress like the file form.
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `/api/scenes/${sceneId}/upload`);
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            setUploadProgress(100);
-            resolve();
-          } else {
-            try {
-              const body = JSON.parse(xhr.responseText) as { error?: string };
-              reject(new Error(body.error ?? `Upload failed (${xhr.status})`));
-            } catch {
-              reject(new Error(`Upload failed (${xhr.status})`));
-            }
-          }
-        };
-        xhr.onerror = () => reject(new Error('Upload connection failed'));
-        const form = new FormData();
-        form.append('video', blob, `capture.${ext}`);
-        xhr.send(form);
-      });
+      const form = new FormData();
+      form.append('video', blob, `capture.${ext}`);
+      await uploadXhr(`/api/scenes/${sceneId}/upload`, form, 'Upload failed');
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -653,30 +665,9 @@ export default function CaptureRecorder() {
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `/api/scenes/${sceneId}/passes`);
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            setUploadProgress(100);
-            resolve();
-          } else {
-            try {
-              const body = JSON.parse(xhr.responseText) as { error?: string };
-              reject(new Error(body.error ?? `Pass upload failed (${xhr.status})`));
-            } catch {
-              reject(new Error(`Pass upload failed (${xhr.status})`));
-            }
-          }
-        };
-        xhr.onerror = () => reject(new Error('Upload connection failed'));
-        const form = new FormData();
-        all.forEach((f, i) => form.append(`pass-${i}`, f, f.name));
-        xhr.send(form);
-      });
+      const form = new FormData();
+      all.forEach((f, i) => form.append(`pass-${i}`, f, f.name));
+      await uploadXhr(`/api/scenes/${sceneId}/passes`, form, 'Pass upload failed');
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

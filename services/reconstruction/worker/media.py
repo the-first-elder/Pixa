@@ -91,8 +91,8 @@ def probe_video(path: str, ext_hint: str | None = None) -> dict[str, Any]:
     if not os.path.exists(path):
         raise MediaError(f"File not found: {path}")
     ext = (ext_hint or os.path.splitext(path)[1]).lower()
-    if ext not in (".mp4", ".mov"):
-        raise MediaError(f"Unsupported format {ext or '(none)'}: MVP accepts .mp4/.mov")
+    if ext not in (".mp4", ".mov", ".webm"):
+        raise MediaError(f"Unsupported format {ext or '(none)'}: accepts .mp4/.mov/.webm")
     size = os.path.getsize(path)
     max_bytes = int(os.environ.get("MAX_UPLOAD_BYTES", str(500 * 1024 * 1024)))
     if size > max_bytes:
@@ -141,7 +141,7 @@ def probe_video(path: str, ext_hint: str | None = None) -> dict[str, Any]:
         "codec": s.get("codec_name"),
         "sizeBytes": size,
         "qualityWarning": quality_warning,
-        "contentType": "video/mp4" if ext == ".mp4" else "video/quicktime",
+        "contentType": {"mp4": "video/mp4", ".mov": "video/quicktime"}.get(ext, "video/webm"),
     }
 
 

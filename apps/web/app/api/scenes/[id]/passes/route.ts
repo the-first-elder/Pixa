@@ -49,17 +49,21 @@ export async function POST(
   if (total > MAX_BYTES) {
     return NextResponse.json({ error: `Passes total ${total} bytes (limit ${MAX_BYTES}). Record shorter passes.` }, { status: 413 });
   }
+  const exts: string[] = [];
   for (const [i, f] of files.entries()) {
     const n = f.name.toLowerCase();
-    if (!n.endsWith('.mp4') && !n.endsWith('.mov')) {
-      return NextResponse.json({ error: `Pass ${i + 1} unsupported format: ${f.name}. MVP accepts .mp4/.mov.` }, { status: 415 });
+    const ext = n.endsWith('.mov') ? '.mov' : n.endsWith('.webm') ? '.webm'
+      : n.endsWith('.mp4') ? '.mp4' : null;
+    if (!ext) {
+      return NextResponse.json({ error: `Pass ${i + 1} unsupported format: ${f.name}. Accepts .mp4/.mov/.webm` }, { status: 415 });
     }
+    exts.push(ext);
   }
 
-  const tmp = mkdtempSync(join(tmpdir(), 'pixa-passes-'));
+  const tmp = mkdtempSync(join(tmpdir(), 'pixa-passes'));
   try {
     const inputs = await Promise.all(files.map(async (f, i) => {
-      const p = join(tmp, `pass-${i}.mp4`);
+      const p = join(tmp, `pass-${i}${exts[i]}`);
       writeFileSync(p, Buffer.from(await f.arrayBuffer()));
       return p;
     }));

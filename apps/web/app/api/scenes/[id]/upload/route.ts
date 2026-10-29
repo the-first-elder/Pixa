@@ -32,11 +32,12 @@ export async function POST(
   if (!(file instanceof File)) {
     return NextResponse.json({ error: 'Missing video file (field "video")' }, { status: 400 });
   }
-  const ext = file.name.toLowerCase().endsWith('.mov') ? '.mov'
-    : file.name.toLowerCase().endsWith('.mp4') ? '.mp4' : null;
+  const lower = file.name.toLowerCase();
+  const ext = lower.endsWith('.mov') ? '.mov' : lower.endsWith('.webm') ? '.webm'
+    : lower.endsWith('.mp4') ? '.mp4' : null;
   if (!ext) {
     return NextResponse.json(
-      { error: `Unsupported format: ${file.name}. MVP accepts .mp4/.mov.` },
+      { error: `Unsupported format: ${file.name}. Accepts .mp4/.mov/.webm` },
       { status: 415 },
     );
   }
