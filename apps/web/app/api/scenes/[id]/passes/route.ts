@@ -27,6 +27,11 @@ export async function POST(
   if (!scene) return NextResponse.json({ error: 'Scene not found' }, { status: 404 });
   const user = await sessionUser();
   if (!canWrite(scene, user?.uid ?? null)) {
+    // Ops log: auth denials are otherwise invisible (no request logging in
+    // prod). No identities logged — just which side of the gate failed.
+    console.warn(
+      `[passes] denied scene=${id} reason=${user ? (scene.ownerId ? 'not-owner' : 'no-owner-record') : 'anonymous'}`,
+    );
     return NextResponse.json({ error: user ? 'Forbidden' : 'Sign in to upload to this scene.' }, { status: user ? 403 : 401 });
   }
 
