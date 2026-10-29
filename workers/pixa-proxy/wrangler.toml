@@ -10,4 +10,4 @@ compatibility_date = "2025-10-01"
 workers_dev = true
 
 [vars]
-ORIGIN = "https://kind-burn-switch-kind.trycloudflare.com"
+ORIGIN = "https://mitsubishi-utah-associations-balanced.trycloudflare.com"
