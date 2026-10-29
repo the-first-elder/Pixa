@@ -38,7 +38,7 @@ export default async function ScenePage({
       <div className="flex flex-1 flex-col overflow-auto">
         {job && job.status !== 'ready' && (
           <div className="px-6 pt-4">
-            <JobStatus jobId={job.id} />
+            <JobStatus jobId={job.id} notifyEmail={user?.email ?? null} />
           </div>
         )}
         {(!job || job.status === 'ready') && (

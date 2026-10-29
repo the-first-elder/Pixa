@@ -38,6 +38,7 @@ export default function CaptureRecorder() {
   const [scout, setScout] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [report, setReport] = useState<CaptureReport | null>(null);
   const [resolution, setResolution] = useState<{ w: number; h: number } | null>(null);
   const blobRef = useRef<Blob | null>(null);
@@ -424,6 +425,7 @@ export default function CaptureRecorder() {
     const blob = blobRef.current;
     if (!blob) return;
     setPhase('uploading');
+    setUploadProgress(0);
     setError(null);
     try {
       const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
@@ -455,13 +457,31 @@ export default function CaptureRecorder() {
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
-      const form = new FormData();
-      form.append('video', blob, `capture.${ext}`);
-      const upRes = await fetch(`/api/scenes/${sceneId}/upload`, { method: 'POST', body: form });
-      if (!upRes.ok) {
-        const body = (await upRes.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `Upload failed (${upRes.status})`);
-      }
+      // XHR (not fetch) so the upload reports progress like the file form.
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/scenes/${sceneId}/upload`);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setUploadProgress(100);
+            resolve();
+          } else {
+            try {
+              const body = JSON.parse(xhr.responseText) as { error?: string };
+              reject(new Error(body.error ?? `Upload failed (${xhr.status})`));
+            } catch {
+              reject(new Error(`Upload failed (${xhr.status})`));
+            }
+          }
+        };
+        xhr.onerror = () => reject(new Error('Upload connection failed'));
+        const form = new FormData();
+        form.append('video', blob, `capture.${ext}`);
+        xhr.send(form);
+      });
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -471,6 +491,7 @@ export default function CaptureRecorder() {
       router.push(`/scenes/${sceneId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
+      setUploadProgress(null);
       setPhase('review');
     }
   }
@@ -648,6 +669,10 @@ export default function CaptureRecorder() {
       )}
       {phase === 'review' && blobUrl && (
         <div className="mt-3">
+          <p className="mb-2 rounded-md border border-white/10 bg-[#111113] px-3 py-2 text-xs text-neutral-300">
+            Pass {pass} ready — each pass uploads as its own separate scene.
+            Only passes you Continue get saved{pass > 1 ? '; starting a new pass discards this recording' : ''}.
+          </p>
           <video src={blobUrl} controls playsInline className="w-full rounded-md bg-black" />
           {report && <CaptureReportView report={report} />}
           <p className="mt-2 text-xs text-neutral-500">
@@ -682,7 +707,19 @@ export default function CaptureRecorder() {
           </div>
         </div>
       )}
-      {phase === 'uploading' && <p className="mt-3 text-sm text-neutral-500">Uploading…</p>}
+      {phase === 'uploading' && (
+        <div className="mt-3">
+          <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800">
+            <div
+              className="h-full bg-white transition-all"
+              style={{ width: `${uploadProgress ?? 0}%` }}
+            />
+          </div>
+          <p className="mt-1 text-sm text-neutral-500">
+            Uploading… {uploadProgress ?? 0}%{uploadProgress === 100 && ' — starting reconstruction…'}
+          </p>
+        </div>
+      )}
       {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
       <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} callbackUrl="/capture" />
       {(phase === 'error' || phase === 'review') && !blobUrl && phase === 'error' && (

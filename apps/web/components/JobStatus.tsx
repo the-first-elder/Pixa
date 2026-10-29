@@ -25,8 +25,22 @@ function fmtElapsed(ms: number): string {
       : `${sec}s`;
 }
 
-/** Polls GET /api/jobs/:jobId until a terminal state. Survives refresh (server-side job records). */
-export default function JobStatus({ jobId, startedAt }: { jobId: string; startedAt?: string }) {
+/**
+ * Polls GET /api/jobs/:jobId until a terminal state. Survives refresh
+ * (server-side job records). Shows a prominent countdown while work remains
+ * and tells the owner they'll be emailed — because renders take a while and
+ * nobody should have to baby-sit the page.
+ */
+export default function JobStatus({
+  jobId,
+  startedAt,
+  notifyEmail,
+}: {
+  jobId: string;
+  startedAt?: string;
+  /** Owner email for the "we'll notify you" line; omit when unknown/signed out. */
+  notifyEmail?: string | null;
+}) {
   const [job, setJob] = useState<JobState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -125,16 +139,38 @@ export default function JobStatus({ jobId, startedAt }: { jobId: string; started
           />
         </div>
       )}
+      {active && typeof job.detail?.etaSeconds === 'number' && job.detail.etaSeconds > 0 ? (
+        <p className="mt-2 text-base font-medium tabular-nums text-white">
+          ≈ {fmtElapsed(job.detail.etaSeconds * 1000)} left
+        </p>
+      ) : (
+        active && (
+          <p className="mt-2 text-sm tabular-nums text-neutral-300">
+            Running {fmtElapsed(elapsed)}{' '}
+            <span className="text-neutral-500">· estimating remaining time…</span>
+          </p>
+        )
+      )}
+      {active && (
+        <p className="mt-2 rounded-md border border-[#e2a63b]/40 bg-[#e2a63b]/10 px-3 py-2 text-xs text-neutral-200">
+          Rendering can take a while — feel free to leave this page.
+          {notifyEmail ? (
+            <> We&rsquo;ll email <span className="font-medium text-white">{notifyEmail}</span> the moment it&rsquo;s ready.</>
+          ) : (
+            <> You&rsquo;ll get an in-app notification when it&rsquo;s ready — sign in to also get an email.</>
+          )}
+        </p>
+      )}
       {job.waitingForTrainer && job.status !== 'ready' && job.status !== 'failed' && (
         <p className="mt-2 text-amber-400">
           Queued behind the running training — starts automatically when the trainer frees up.
         </p>
       )}
       {active && job.detail?.step != null && job.detail?.total != null && (
-        <p className="mt-2 text-xs text-neutral-400">
+        <p className="mt-1 text-xs text-neutral-500">
           Step {job.detail.step.toLocaleString()} / {job.detail.total.toLocaleString()}
           {typeof job.detail.etaSeconds === 'number' && job.detail.etaSeconds > 0 && (
-            <> · ~{fmtElapsed(job.detail.etaSeconds * 1000)} left <span title="Estimated by the trainer from current speed; fluctuates">(trainer estimate)</span></>
+            <span title="Estimated by the trainer from current speed; fluctuates"> (trainer estimate)</span>
           )}
         </p>
       )}
