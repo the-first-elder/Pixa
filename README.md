@@ -46,7 +46,7 @@ arriving. They already shoot the video. Now they can ask it questions.
 | **Guided capture**         | In-browser recorder with live pacing/sharpness/light coaching, coverage compass, wake lock (sleep can't kill your recording), auto-saved device copies of every pass      |
 | **Multi-pass capture**     | Film what you missed in extra passes; they're staged individually (one dropped pass retries alone) and joined into one complete video                                     |
 | **Real reconstruction**    | Frames → camera poses (SfM) → 3D Gaussian splats → collision mesh, on-device at $0, tiered quality (Preview / Balanced / Full)                                            |
-| **Walk, don't just orbit** | Orbit, free-fly, and eye-level **Rooms** mode: enter at a real captured viewpoint, pointer-lock mouse-look, WASD + touch joystick, walls/floor/ceiling constrain you      |
+| **Walk, don't just orbit** | Orbit, free-fly, and eye-level **Walk** mode: enter at a real captured viewpoint, pointer-lock mouse-look, WASD + touch joystick, walls/floor/ceiling constrain you      |
 | **Ask anything**           | _"Go to the blue towel"_ — the camera glides there and focuses. _"How big is it?"_ — measured, with calibration. _"Where can I buy one?"_ — live web search, with sources |
 | **Voice**                  | Push-to-talk runs the identical pipeline as typing; answers are spoken back                                                                                               |
 | **My Worlds**              | Searchable card library: thumbnails, objects/views/coverage stats, job progress with ETA, completion emails, inline rename, delete                                        |
@@ -75,7 +75,7 @@ flowchart LR
         J[Reprojection audit]
     end
     subgraph Experience
-        K[Orbit / Fly / Rooms walk]
+        K[Orbit / Fly / Walk]
         L[Assistant: scene tools + web]
     end
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L
