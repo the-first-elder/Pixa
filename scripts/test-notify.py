@@ -77,6 +77,13 @@ def main():
         ok("ready+failed renders carry link, brand, error code")
     else:
         bad("renders", subj)
+    # 3b. failure mail must name the scene, state the error, and link to it
+    if (subj2 == "We couldn't finish building Sunny Loft"
+            and "Sunny Loft" in html2 and "COVERAGE_GAP" in html2
+            and "https://example.invalid/scenes/scene_mail" in html2):
+        ok("failed mail carries scene name + error + link")
+    else:
+        bad("failed mail content", subj2)
     # 4. missing creds: fail closed, stamp released for retry
     del os.environ["EMAIL_DRY_RUN"]
     if notify.send("t@e.com", "Test User", {"status": "ready", "sceneId": "scene_mail", "id": "x"}) is False:

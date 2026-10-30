@@ -171,6 +171,10 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
             eyeOffsetBase = Math.max(0.3, (boundRadius / 2.2) * 0.3);
           }
         }
+        // Confined environment: orbiting can pull back to see the whole
+        // captured volume, never beyond it into the black void.
+        controls.minDistance = 0.05;
+        controls.maxDistance = boundRadius;
         setModeRef.current = (m: ViewerMode) => {
           if (m === 'rooms' && colliders.length === 0) return; // no proxy, no rooms
           if (m === 'rooms' && modeRef.current !== 'rooms') snapRef.current();
@@ -387,6 +391,11 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
                   sphere.center.z + r * 1.1,
                 );
                 controls.target.copy(sphere.center);
+                // No captured viewpoints: confine to the splat bounds
+                // themselves (world frame) instead of the default sphere.
+                boundCenter.copy(sphere.center).applyQuaternion(worldGroup.quaternion);
+                boundRadius = Math.max(1.2, r);
+                controls.maxDistance = boundRadius;
                 }
               } catch {
                 // Keep the default camera; user can orbit freely.
@@ -436,6 +445,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         const walkRight = new THREE.Vector3();
         const walkMove = new THREE.Vector3();
         const walkVel = new THREE.Vector3();
+        const confineTmp = new THREE.Vector3();
         let bobPhase = 0;
         const flatDir = new THREE.Vector3();
         const raycaster = new THREE.Raycaster();
@@ -637,6 +647,23 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           // OrbitControls.update() returns true when user input or damping
           // moved the camera — a frame must follow or input appears dead.
           if (controls.update()) needsRender = true;
+          // CONFINED ENVIRONMENT (all modes, every frame): camera and
+          // orbit target stay inside the capture volume. There is no
+          // "outside the video" to fly to — no black void, ever.
+          {
+            const tOff = confineTmp.copy(controls.target).sub(boundCenter);
+            const tMax = boundRadius * 0.55;
+            if (tOff.length() > tMax) {
+              controls.target.copy(boundCenter).addScaledVector(tOff.normalize(), tMax);
+              needsRender = true;
+            }
+            const cOff = confineTmp.copy(camera.position).sub(boundCenter);
+            const cMax = boundRadius * 0.98;
+            if (cOff.length() > cMax) {
+              camera.position.copy(boundCenter).addScaledVector(cOff.normalize(), cMax);
+              needsRender = true;
+            }
+          }
           if (needsRender) {
             needsRender = false;
             const renderStart = performance.now();
