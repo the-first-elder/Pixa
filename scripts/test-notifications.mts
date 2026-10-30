@@ -44,7 +44,7 @@ write('recordings.json', {
   },
 });
 
-const { ensureNotifications, listNotifications, markRead, unreadCount } = await import(
+const { ensureNotifications, listNotifications, markRead, markAllRead, unreadCount } = await import(
   '../apps/web/lib/notifications.ts'
 );
 
@@ -85,4 +85,10 @@ const failed = listNotifications(UID).find((n) => n.kind === 'scene-failed')!;
 assert.equal(failed.title, 'We couldn’t finish building your world');
 assert.equal(failed.detail, 'COVERAGE_GAP');
 
-console.log('notifications: 4/4 suites pass (creation, idempotency, read+isolation, copy)');
+// 5. Mark-all-read acknowledges only the caller's unread items.
+assert.equal(markAllRead(UID), 2);
+assert.equal(unreadCount(UID), 0);
+assert.equal(markAllRead(UID), 0);
+assert.equal(unreadCount(OTHER), 0);
+
+console.log('notifications: 5/5 suites pass (creation, idempotency, read+isolation, copy, mark-all)');

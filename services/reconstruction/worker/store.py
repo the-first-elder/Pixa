@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -154,19 +155,84 @@ def _maybe_email(job_id: str, job: dict[str, Any]) -> None:
         if _os.environ.get("EMAIL_DRY_RUN") == "1":
             _notify.send(email, name, job)  # render-only, stamps nothing
             return
-        jobs = _load("jobs.json")
-        if job_id not in jobs:
-            return
-        jobs[job_id].setdefault("emailNotified", {})[job["status"]] = True
-        _save("jobs.json", jobs)
-        if not _notify.send(email, name, job):
-            jobs = _load("jobs.json")
-            if job_id in jobs:
-                jobs[job_id].get("emailNotified", {}).pop(job["status"], None)
-                _save("jobs.json", jobs)
+        _send_stamped(job_id, job, email, name)
     except Exception as e:  # noqa: BLE001 — email must never fail a job
         print(f"[notify] skipped: {type(e).__name__}: {str(e)[:120]}",
               file=sys.stderr)
+
+
+def _send_stamped(job_id: str, job: dict[str, Any], email: str,
+                  name: str | None) -> bool:
+    """Stamp-then-send one terminal mail. Shared by _maybe_email (hot path)
+    and redrive_emails (catch-up). False on any failure (stamp released)."""
+    from . import notify as _notify
+    jobs = _load("jobs.json")
+    if job_id not in jobs:
+        return False
+    status = jobs[job_id]["status"]
+    jobs[job_id].setdefault("emailNotified", {})[status] = True
+    _save("jobs.json", jobs)
+    try:
+        if not _notify.send(email, name, jobs[job_id]):
+            raise RuntimeError("send returned False")
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"[notify] send failed: {type(e).__name__}: {str(e)[:120]}",
+              file=sys.stderr)
+        jobs = _load("jobs.json")
+        if job_id in jobs:
+            jobs[job_id].get("emailNotified", {}).pop(status, None)
+            _save("jobs.json", jobs)
+        return False
+
+
+def redrive_emails() -> int:
+    """Catch-up pass: mail terminal jobs that never got their stamp.
+
+    Covers jobs that finished while the worker lacked mail credentials (or
+    Brevo was unreachable): the hot path already released their stamp, and
+    nothing would ever retry. Single-flight via an atomic mkdir lock (stale
+    after 10 min); at-most-once preserved by the same stamp-before-send.
+    Returns mails sent. Never raises.
+    """
+    from . import notify as _notify
+    lock = os.path.join(storage_dir(), "email-redrive.lock")
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        try:
+            if time.time() - os.path.getmtime(lock) < 600:
+                return 0
+            os.rmdir(lock)
+            os.mkdir(lock)
+        except OSError:
+            return 0
+    except OSError:
+        return 0
+    sent = 0
+    try:
+        jobs = _load("jobs.json")
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            if job.get("status") not in ("ready", "failed"):
+                continue
+            try:
+                email, name = _notify.recipient(job)
+            except Exception:  # noqa: BLE001
+                continue
+            if not email:
+                continue
+            if job.get("emailNotified", {}).get(job["status"]):
+                continue
+            if _send_stamped(job_id, job, email, name):
+                sent += 1
+    finally:
+        try:
+            os.rmdir(lock)
+        except OSError:
+            pass
+    return sent
 
 
 def update_progress(job_id: str, progress: int | None,

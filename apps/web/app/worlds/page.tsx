@@ -8,7 +8,6 @@ import AuthNav from '@/components/AuthNav';
  * as static and serve 200 instead of redirecting (measured CI failure).
  */
 export const dynamic = 'force-dynamic';
-import NotificationsPanel from '@/components/NotificationsPanel';
 import SceneGrid from '@/components/SceneGrid';
 import { authEnabled, sessionUser } from '@/lib/authz';
 import { ensureNotifications } from '@/lib/notifications';
@@ -97,8 +96,6 @@ export default async function WorldsPage() {
           </Link>
         </div>
       )}
-
-      <NotificationsPanel />
 
       {scenes.length > 0 && (
         <section className="mt-10">

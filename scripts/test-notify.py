@@ -96,6 +96,35 @@ def main():
         ok("send failure releases stamp for retry")
     else:
         bad("stamp retained after failed send", str(j2.get("emailNotified")))
+    # 5. redrive: unstamped terminal job is mailed once, then never again
+    jobs = store._load("jobs.json")
+    jobs["job_mail1"].setdefault("emailNotified", {})["failed"] = True  # already mailed
+    jobs["job_mail2"] = dict(jobs["job_mail1"], id="job_mail2", status="ready")
+    jobs["job_mail2"].pop("emailNotified", None)
+    store._save("jobs.json", jobs)
+    os.environ["EMAIL_DRY_RUN"] = "1"
+    if store.redrive_emails() == 1:
+        ok("redrive mails one unstamped terminal job")
+    else:
+        bad("redrive count")
+    if store.redrive_emails() == 0:
+        ok("redrive is idempotent (stamped jobs skipped)")
+    else:
+        bad("redrive repeated a stamped job")
+    # 6. stale lock doesn't block redrive forever
+    lock = os.path.join(STORE, "email-redrive.lock")
+    os.mkdir(lock)
+    old = 0  # epoch mtime => older than the 10-min staleness window
+    os.utime(lock, (old, old))
+    jobs = store._load("jobs.json")
+    jobs["job_mail3"] = dict(jobs["job_mail1"], id="job_mail3", status="ready")
+    jobs["job_mail3"].pop("emailNotified", None)
+    store._save("jobs.json", jobs)
+    if store.redrive_emails() == 1 and not os.path.exists(lock):
+        ok("stale redrive lock is reclaimed, lock released")
+    else:
+        bad("stale lock handling")
+    del os.environ["EMAIL_DRY_RUN"]
     print(f"RESULT: {PASS} passed, {len(FAIL)} failed")
     shutil.rmtree(STORE, ignore_errors=True)
     return 1 if FAIL else 0

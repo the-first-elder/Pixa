@@ -53,6 +53,7 @@ export interface ProcessingJob {
   waitingSince?: string;
   detail?: JobDetail | null;
   ownerId?: string | null;
+  emailNotified?: Record<string, boolean>;
 }
 
 export interface Scene {

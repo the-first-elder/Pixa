@@ -24,6 +24,18 @@ export async function GET(
     const { ensureNotifications } = await import('@/lib/notifications');
     ensureNotifications(user.uid);
   }
+  // Opportunistic email re-drive: jobs that finished while the worker lacked
+  // mail credentials (or Brevo was unreachable) never got their completion
+  // mail and nothing would retry. One detached catch-up pass; at-most-once
+  // is enforced worker-side by the stamp-before-send + mkdir lock.
+  if (user && (job.status === 'ready' || job.status === 'failed') && !job.emailNotified?.[job.status]) {
+    try {
+      const { spawnWorker } = await import('@/lib/worker');
+      spawnWorker(['redrive-emails']);
+    } catch {
+      // Email must never break status polling.
+    }
+  }
   return NextResponse.json({
     jobId: job.id,
     status: job.status,

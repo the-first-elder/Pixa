@@ -369,17 +369,31 @@ def cmd_recover(_args: argparse.Namespace) -> int:
                         os.kill(int(pgid), _signal.SIGTERM)
                     except (ProcessLookupError, PermissionError, OSError):
                         pass
-            job["status"] = "failed"
-            job["errorCode"] = "INTERRUPTED"
-            job["errorMessage"] = ("Process ended while this job was active. "
-                                   "Nothing was resumed; retry explicitly.")
-            job["completedAt"] = store.now()
-            job.setdefault("transitions", []).append({"status": "failed", "at": store.now()})
             for k in ("trainPid", "trainPgid", "waitingForTrainer", "waitingSince"):
                 job.pop(k, None)
             marked.append(jid)
     store._save("jobs.json", jobs)
+    # Route the terminal state through store.transition (single transition
+    # entry, completedAt, failure mail). Direct mutation used to skip
+    # _maybe_email silently — recovered jobs never mailed.
+    for jid in marked:
+        store.transition(jid, "failed", errorCode="INTERRUPTED",
+                         errorMessage=("Process ended while this job was active. "
+                                       "Nothing was resumed; retry explicitly."))
     print(json.dumps({"markedInterrupted": marked}))
+    return 0
+
+
+def cmd_redrive_emails(_args: argparse.Namespace) -> int:
+    """Catch-up pass for completion mail missed by finished jobs (e.g. the
+    worker lacked mail credentials when they completed). At-most-once via
+    the same stamp-before-send; prints {"mailed": n}. Never fails."""
+    try:
+        n = store.redrive_emails()
+    except Exception as e:  # noqa: BLE001
+        print(f"REDRIVE FAILED: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps({"mailed": n}))
     return 0
 
 
@@ -512,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
     g.set_defaults(fn=cmd_process_segment)
     r = sub.add_parser("recover", help="Mark interrupted non-terminal jobs failed")
     r.set_defaults(fn=cmd_recover)
+    rd = sub.add_parser("redrive-emails", help="Mail terminal jobs missing their completion mail")
+    rd.set_defaults(fn=cmd_redrive_emails)
     sp = sub.add_parser("split-segment", help="Split a segment at a timestamp")
     sp.add_argument("--recording", required=True)
     sp.add_argument("--segment", required=True)

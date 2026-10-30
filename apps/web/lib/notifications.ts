@@ -72,6 +72,19 @@ export function markRead(ownerId: string, id: string): Notification | null {
   return n;
 }
 
+export function markAllRead(ownerId: string): number {
+  const all = load();
+  let changed = 0;
+  for (const n of Object.values(all)) {
+    if (n.ownerId === ownerId && !n.readAt) {
+      n.readAt = now();
+      changed++;
+    }
+  }
+  if (changed > 0) save(all);
+  return changed;
+}
+
 function create(n: Omit<Notification, 'id' | 'createdAt' | 'readAt'>): Notification | null {
   const all = load();
   if (Object.values(all).some((x) => x.dedupeKey === n.dedupeKey)) return null;
