@@ -166,9 +166,66 @@ function loadPoses(
   }
 }
 export function findByLabel(index: SceneIndex, label: string): IndexEntity[] {
-  const q = label.trim().toLowerCase();
-  if (!q) return [];
-  return index.entities.filter((e) => e.label.toLowerCase().includes(q));
+  return matchEntities(index, label).matches;
+}
+
+const ATTRIBUTE_WORDS = new Set([
+  'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'pink', 'black',
+  'white', 'grey', 'gray', 'brown', 'gold', 'golden', 'silver', 'dark',
+  'light', 'wooden', 'wood', 'metal', 'steel', 'plastic', 'glass',
+  'leather', 'fabric', 'striped', 'floral', 'plain', 'big', 'large',
+  'small', 'tall', 'short', 'long', 'round', 'square', 'old', 'new',
+]);
+
+function singular(w: string): string {
+  if (w.endsWith('ies') && w.length > 3) return w.slice(0, -3) + 'y';
+  if (w.endsWith('es') && w.length > 2) return w.slice(0, -2);
+  if (w.endsWith('s') && w.length > 1) return w.slice(0, -1);
+  return w;
+}
+
+export interface QueryMatch {
+  matches: IndexEntity[];
+  /** Attribute words the user specified (color/material/size…). */
+  attributes: string[];
+  /** >1 plausible instance and attributes don't separate them. */
+  ambiguous: boolean;
+}
+
+/**
+ * Attribute-aware entity matching ("the blue towel"): tokenise the query,
+ * split attribute adjectives from the noun, match the noun (plural-tolerant)
+ * against labels, then rank labels that also carry an attribute word first
+ * (SAM/Spark labels often include color: "blue towel"). When several
+ * instances remain and nothing separates them, flag ambiguity instead of
+ * silently picking one — the caller highlights all and says so.
+ */
+export function matchEntities(index: SceneIndex, query: string): QueryMatch {
+  const tokens = query.trim().toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (tokens.length === 0) return { matches: [], attributes: [], ambiguous: false };
+  const attributes = tokens.filter((t) => ATTRIBUTE_WORDS.has(t));
+  const nounTokens = tokens.filter((t) => !ATTRIBUTE_WORDS.has(t)).map(singular);
+  const labelSingular = (label: string) =>
+    label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(singular);
+  const scored: { e: IndexEntity; score: number }[] = [];
+  for (const e of index.entities) {
+    const lt = labelSingular(e.label);
+    const nounHit = nounTokens.length === 0
+      ? lt.some((t) => tokens.map(singular).includes(t))
+      : nounTokens.some((t) => lt.includes(t));
+    if (!nounHit) continue;
+    let score = 1;
+    if (attributes.some((a) => lt.includes(a))) score += 2;
+    if (lt.join(' ') === nounTokens.join(' ')) score += 1;
+    scored.push({ e, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const matches = scored.map((s) => s.e);
+  // Ambiguity clears only when an attribute actually separates instances —
+  // two towels are ambiguous even if one label matches the noun exactly.
+  const separated =
+    attributes.length > 0 && scored.length > 1 && scored[0].score > scored[1].score;
+  return { matches, attributes, ambiguous: matches.length > 1 && !separated };
 }
 
 /** Nearby entities via explicit graph relationships only — never invented. */

@@ -69,6 +69,8 @@ expect 401 "anon scene create" -X POST "$BASE/api/scenes" -H 'Content-Type: appl
 expect 401 "anon upload session" -X POST "$BASE/api/uploads" -H 'Content-Type: application/json' -d '{"filename":"a.mp4","size":10}'
 expect 401 "anon recording create" -X POST "$BASE/api/recordings" -H 'Content-Type: application/json' -d '{"name":"x","videoPath":"/tmp/x"}'
 expect 401 "anon query on public scene" -X POST "$BASE/api/scenes/scene_pub/query" -H 'Content-Type: application/json' -d '{"message":"hi"}'
+printf 'x' > /tmp/wl-dummy-audio.bin
+expect 401 "anon voice on public scene" -X POST "$BASE/api/scenes/scene_pub/voice" -F "audio=@/tmp/wl-dummy-audio.bin"
 expect 401 "anon notifications list" "$BASE/api/notifications"
 
 # Legacy records grandfathered (read open).

@@ -6,7 +6,7 @@
 import 'server-only';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chat, type ChatContentPart, type ToolCall } from '@pixa/model-adapters';
+import { chat, searchWeb, type ChatContentPart, type ToolCall } from '@pixa/model-adapters';
 import type { ActionResult } from '@pixa/shared-types';
 import { STORAGE_DIR } from './config';
 import {
@@ -32,7 +32,9 @@ Grounding rules (no exceptions):
 
 Behavior:
 - Prefer calling exactly the tools needed, then answer concisely (2-4 sentences) describing what the user now sees and citing evidence (entity labels, frame ids) where relevant.
-- If nothing needs a tool (greetings, capability questions), answer directly and honestly about current capabilities.`;
+- If nothing needs a tool (greetings, capability questions), answer directly and honestly about current capabilities.
+- Questions about the world beyond this scene (where to buy, prices, product facts, care info): call webInfo and present its answer WITH its sources, clearly as web facts — never as scene evidence. Scene facts (what/where/size here) never come from webInfo.
+- Attribute questions ("the blue towel"): labels may not record attributes. If several instances match, the evidence frames attached later show them — describe which instance matches from the frames and say how you told them apart.`;
 
 export interface DispatchedAction extends ActionResult {
   actionId: string;
@@ -114,7 +116,7 @@ export async function runQuery(
       { role: 'user', content: effectiveMessage },
     ],
     tools: TOOL_DEFS,
-    maxTokens: 2048,
+    maxTokens: 4096,
   });
 
   const dispatched: DispatchedAction[] = [];
@@ -133,6 +135,20 @@ export async function runQuery(
     let execStatus: ActionResult['status'] = validation.status === 'success' || validation.status === 'not_found' || validation.status === 'invalid_args' || validation.status === 'unsupported'
       ? validation.status
       : 'execution_failed';
+    if (validation.status === 'success' && name === 'webInfo') {
+      try {
+        const r = await searchWeb({ query: String(parsedArgs.query ?? '') });
+        execResult = { answer: r.answer, sources: r.sources, searched: r.searched };
+        execMessage = r.answer
+          ? r.answer + (r.sources.length > 0
+              ? `\nSources: ${r.sources.map((s) => `${s.title} (${s.url})`).join('; ')}`
+              : '')
+          : 'Web search returned no answer text.';
+      } catch (e) {
+        execStatus = 'execution_failed';
+        execMessage = e instanceof Error ? e.message.slice(0, 200) : 'Web search failed';
+      }
+    }
     if (validation.status === 'success' && (name === 'measureObject' || name === 'calibrateScale')) {
       try {
         if (name === 'measureObject') {
@@ -227,7 +243,7 @@ export async function runQuery(
           ],
         },
       ],
-      maxTokens: 2048,
+      maxTokens: 4096,
     });
     if (follow.content?.trim()) response = follow.content.trim();
   }

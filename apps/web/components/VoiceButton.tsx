@@ -3,9 +3,10 @@
 import { useRef, useState } from 'react';
 
 /**
- * Push-to-talk voice input. Records, uploads for transcription, and hands the
- * transcript back for correction before it enters the query pipeline.
- * Degrades to typed input when mic/transcription is unavailable (PRD §12.7).
+ * Push-to-talk voice input. Records, uploads for transcription, and submits
+ * the transcript through the same query pipeline as typed text (the caller
+ * wires onTranscript to send). Degrades to typed input when the mic or
+ * transcription is unavailable (PRD §12.7).
  */
 export default function VoiceButton({
   sceneId,

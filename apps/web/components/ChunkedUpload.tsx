@@ -63,25 +63,38 @@ export default function ChunkedUpload({ file, name }: { file: File; name: string
         chunks = data.chunks;
         received = data.received;
       }
-      for (let i = 0; i < chunks; i++) {
-        if (stopRef.current) {
-          setPhase('idle');
-          return { paused: true as const, uploadId };
+      // Parallel chunk workers (3): phone uplinks are latency-bound, so
+      // sequential chunks waste most of the pipe. The server bitmap is
+      // per-index, so out-of-order completion is already the design.
+      const pending: number[] = [];
+      for (let i = 0; i < chunks; i++) if (!received[i]) pending.push(i);
+      let cursor = 0;
+      let receivedBytes = received.reduce(
+        (a, r, i) => a + (r ? Math.min(chunkSize, file.size - i * chunkSize) : 0), 0,
+      );
+      const worker = async () => {
+        while (cursor < pending.length) {
+          if (stopRef.current) return;
+          const i = pending[cursor++];
+          const start = i * chunkSize;
+          const blob = file.slice(start, Math.min(file.size, start + chunkSize));
+          const put = await fetch(`/api/uploads/${uploadId}/chunks/${i}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: blob,
+          });
+          if (!put.ok) {
+            const body = (await put.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(body?.error ?? `Chunk ${i} failed (${put.status})`);
+          }
+          receivedBytes += blob.size;
+          setProgress(Math.round((receivedBytes / file.size) * 100));
         }
-        if (received[i]) continue;
-        const start = i * chunkSize;
-        const blob = file.slice(start, Math.min(file.size, start + chunkSize));
-        const put = await fetch(`/api/uploads/${uploadId}/chunks/${i}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: blob,
-        });
-        if (!put.ok) {
-          const body = (await put.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? `Chunk ${i} failed (${put.status})`);
-        }
-        const st = (await put.json()) as { receivedBytes: number };
-        setProgress(Math.round((st.receivedBytes / file.size) * 100));
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      if (stopRef.current) {
+        setPhase('idle');
+        return { paused: true as const, uploadId };
       }
       const done = await fetch(`/api/uploads/${uploadId}/complete`, { method: 'POST' });
       if (!done.ok) {

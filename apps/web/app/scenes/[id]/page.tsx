@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import CoverageBadge from '@/components/CoverageBadge';
 import JobStatus from '@/components/JobStatus';
+import SceneRecovery from '@/components/SceneRecovery';
 import SceneWorkspace from '@/components/SceneWorkspace';
 import SharePanel from '@/components/SharePanel';
 import { canRead, sessionUser } from '@/lib/authz';
@@ -44,9 +45,18 @@ export default async function ScenePage({
         )}
       </header>
       <div className="flex flex-1 flex-col overflow-auto">
-        {job && job.status !== 'ready' && (
+        {job && job.status !== 'ready' && job.status !== 'failed' && (
           <div className="px-6 pt-4">
             <JobStatus jobId={job.id} notifyEmail={user?.email ?? null} />
+          </div>
+        )}
+        {(job?.status === 'failed' || !job) && (
+          <div className="px-6 pt-4">
+            <SceneRecovery
+              sceneId={id}
+              hasVideo={Boolean((scene.sourceVideo as { storagePath?: string } | null)?.storagePath)}
+              failed={job?.status === 'failed'}
+            />
           </div>
         )}
         {(!job || job.status === 'ready') && (

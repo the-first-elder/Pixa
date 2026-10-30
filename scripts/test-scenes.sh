@@ -53,6 +53,20 @@ rm -f /tmp/wl-s3.webm
 JR1=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID/passes" -F "pass-0=@/tmp/wl-s1.mp4;type=video/mp4")
 echo "$JR1" | grep -q "at least 2 passes" && ok "single pass rejected" || bad "single pass accepted: $JR1"
 
+# 5b. staged passes: stage individually, finalize joins; missing pass -> 409
+SID3=$(api -X POST "$BASE/api/scenes" -H 'Content-Type: application/json' -d '{"name":"qa staged"}' | python3 -c "import json,sys; print(json.load(sys.stdin).get('sceneId',''))")
+ST0=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID3/passes/stage" -F "pass=@/tmp/wl-s1.mp4;type=video/mp4" -F "index=0")
+echo "$ST0" | grep -q '"staged":true' && ok "stage pass 0" || bad "stage pass 0: $ST0"
+FIN0=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID3/passes/finalize" -H 'Content-Type: application/json' -d '{"count":2}')
+echo "$FIN0" | grep -q "Pass 2 is not staged" && ok "finalize missing pass -> 409 named" || bad "finalize missing: $FIN0"
+curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID3/passes/stage" -F "pass=@/tmp/wl-s2.mp4;type=video/mp4" -F "index=1" > /dev/null
+FIN=$(curl -s -H "Cookie: $HDR" -X POST "$BASE/api/scenes/$SID3/passes/finalize" -H 'Content-Type: application/json' -d '{"count":2}')
+echo "$FIN" | grep -q '"passes":2' && ok "finalize joins staged passes" || bad "finalize staged: $FIN"
+# Reprocess path (recovery): returns 202 + jobId; worker outcome is async.
+PROC=$(api -X POST "$BASE/api/scenes/$SID3/process" -H 'Content-Type: application/json' -d '{"backend":"spirula"}')
+echo "$PROC" | grep -q '"jobId"' && ok "reprocess accepted (202 + jobId)" || bad "reprocess: $PROC"
+api -X DELETE "$BASE/api/scenes/$SID3" > /dev/null
+
 # 6. delete + gone
 DEL=$(api -X DELETE "$BASE/api/scenes/$SID")
 echo "$DEL" | grep -q "$SID" && ok "delete scene" || bad "delete: $DEL"

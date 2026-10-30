@@ -7,6 +7,7 @@
 import type { ToolDefinition } from '@pixa/model-adapters';
 import {
   findByLabel,
+  matchEntities,
   evidenceViewpoint,
   getSceneIndex,
   relatedEntities,
@@ -15,6 +16,25 @@ import {
 import { measureLabel } from './scale';
 
 export const TOOL_DEFS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'webInfo',
+      description:
+        'Answer a question about the world BEYOND this scene — where to buy something, typical prices, product facts, care/cleaning info — using live web search with sources. ' +
+        'Use ONLY for external facts (e.g. "where can I buy a towel like this", "how much does a standing fan cost", "how do I clean this"). ' +
+        'Never use it for facts about THIS scene (what/where/size of objects here) — those come from the scene index only. ' +
+        'Results are web facts, not scene evidence; present them with their sources.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Self-contained search question, e.g. "where to buy a blue bath towel online typical price".' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -181,6 +201,13 @@ export function validateToolCall(
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
   switch (tool) {
+    case 'webInfo': {
+      // External facts: executed server-side in the assistant loop (live
+      // web search). Nothing about the scene is validated or claimed here.
+      const q = str(args.query);
+      if (!q) return { status: 'invalid_args', targetId: null, message: 'Missing "query".' };
+      return { status: 'success', targetId: null, message: 'Web search queued.' };
+    }
     case 'navigateToLocation': {
       const q = str(args.location);
       if (!q) return { status: 'invalid_args', targetId: null, message: 'Missing "location".' };
@@ -214,7 +241,7 @@ export function validateToolCall(
     case 'highlightObjects': {
       const q = str(args.label);
       if (!q) return { status: 'invalid_args', targetId: null, message: 'Missing "label".' };
-      const matches = findByLabel(index, q);
+      const { matches, attributes, ambiguous } = matchEntities(index, q);
       if (matches.length === 0) {
         return {
           status: 'not_found', targetId: null,
@@ -268,7 +295,9 @@ export function validateToolCall(
                 p[2] + (dir[2] / len) * distance,
               ],
               target: p,
-              durationMs: 1600,
+              // Glide, don't snap: duration grows with travel distance so
+              // long moves feel cinematic instead of teleporting.
+              durationMs: Math.round(Math.min(3400, Math.max(1700, 1500 + distance * 650))),
             };
           }
         } catch {
@@ -281,6 +310,16 @@ export function validateToolCall(
         entityIds: registered.map((m) => m.id),
         positions: registered.map((m) => m.position as [number, number, number]),
         ...(focusCamera ? { camera: focusCamera } : {}),
+        ...(ambiguous
+          ? {
+              message:
+                `${registered.length} instances match "${q}"` +
+                (attributes.length > 0
+                  ? ` — labels don't record "${attributes.join(' ')}", so all are highlighted; ` +
+                    'use the attached evidence frames to tell the user which one matches the description.'
+                  : ' — all are highlighted; ask which one if it matters.'),
+            }
+          : {}),
         evidence: { frames: [...new Set(registered.flatMap((m) => m.evidence.frames))].slice(0, 6) },
       };
     }

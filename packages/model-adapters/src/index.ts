@@ -3,6 +3,8 @@ export { chat, listModels } from './spark';
 export type { ChatContentPart, ChatMessage, ChatOptions, ChatResult, ToolCall, ToolDefinition } from './spark';
 export { segmentImage, parseBoxes, uploadFile, segmentVideo } from './sam';
 export type { SamBox, SamImageResult, SegmentImageOptions, SamTrackObs, SegmentVideoOptions, SegmentVideoResult } from './sam';
+export { searchWeb } from './search';
+export type { SearchSource, SearchWebResult } from './search';
 export { transcribe } from './voice';
 export type { TranscribeOptions, TranscribeResult, TranscribeTurn } from './voice';
 export { generateImage } from './image';

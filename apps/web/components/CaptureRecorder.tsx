@@ -550,17 +550,23 @@ export default function CaptureRecorder() {
   /** XHR upload with one automatic retry on connection loss (mobile networks
    * drop mid-upload; the scene endpoints are idempotent per scene, and a
    * second identical pass-set simply rejoins deterministically). */
-  function uploadXhr(url: string, form: FormData, label: string): Promise<void> {
+  function uploadXhr(
+    url: string,
+    form: FormData,
+    label: string,
+    onProgress?: (pct: number) => void,
+  ): Promise<void> {
+    const report = onProgress ?? ((pct: number) => setUploadProgress(pct));
     const attempt = () =>
       new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url);
         xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+          if (ev.lengthComputable) report(Math.round((ev.loaded / ev.total) * 100));
         };
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
-            setUploadProgress(100);
+            report(100);
             resolve();
           } else {
             let message = `${label} (${xhr.status})`;
@@ -639,7 +645,9 @@ export default function CaptureRecorder() {
     startPreview();
   }
 
-  /** Upload all kept passes + the current recording as ONE joined scene. */
+  /** Upload all kept passes + the current recording as ONE joined scene.
+   * Passes stage one by one (each retryable alone) — a dropped connection
+   * on pass 4 of 5 no longer loses the whole set, however many there are. */
   async function useJoinedRecording() {
     const blob = blobRef.current;
     const all = [...passFiles];
@@ -665,9 +673,33 @@ export default function CaptureRecorder() {
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
-      const form = new FormData();
-      all.forEach((f, i) => form.append(`pass-${i}`, f, f.name));
-      await uploadXhr(`/api/scenes/${sceneId}/passes`, form, 'Pass upload failed');
+      const totalBytes = all.reduce((a, f) => a + f.size, 0) || 1;
+      let doneBytes = 0;
+      for (let i = 0; i < all.length; i++) {
+        const f = all[i];
+        const form = new FormData();
+        form.append('pass', f, f.name);
+        form.append('index', String(i));
+        // Per-pass progress folds into the overall bar by byte share.
+        const startBytes = doneBytes;
+        await uploadXhr(
+          `/api/scenes/${sceneId}/passes/stage`,
+          form,
+          `Pass ${i + 1} upload failed`,
+          (pct) => setUploadProgress(Math.round(((startBytes + (f.size * pct) / 100) / totalBytes) * 100)),
+        );
+        doneBytes += f.size;
+        setUploadProgress(Math.round((doneBytes / totalBytes) * 100));
+      }
+      const fin = await fetch(`/api/scenes/${sceneId}/passes/finalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: all.length }),
+      });
+      if (!fin.ok) {
+        const body = (await fin.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Pass join failed (${fin.status})`);
+      }
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

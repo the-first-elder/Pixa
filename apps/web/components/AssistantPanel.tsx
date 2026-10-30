@@ -222,7 +222,15 @@ export default function AssistantPanel({
           placeholder="Ask or instruct…"
           className="flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
         />
-        <VoiceButton sceneId={sceneId} onTranscript={(t) => setInput(t)} />
+        <VoiceButton
+          sceneId={sceneId}
+          onTranscript={(t) => {
+            // Voice goes through the exact same pipeline as typed text:
+            // same query endpoint, same tools, same spoken reply.
+            setInput(t);
+            void send(t);
+          }}
+        />
         <button
           type="submit"
           disabled={phase === 'thinking' || phase === 'executing'}
