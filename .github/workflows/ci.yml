@@ -91,6 +91,8 @@ jobs:
         run: STORAGE_DIR=/tmp/wl-admtest npx tsx --conditions react-server scripts/test-admission.mts
       - name: Grounding matcher units (attribute-aware, ambiguity)
         run: npx tsx --conditions react-server scripts/test-grounding.mts
+      - name: Coverage compass logic units (relative sectors, dwell)
+        run: npx tsx scripts/test-compass.mts
 
   auth:
     runs-on: ubuntu-latest

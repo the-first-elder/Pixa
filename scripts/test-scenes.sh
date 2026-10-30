@@ -67,6 +67,30 @@ PROC=$(api -X POST "$BASE/api/scenes/$SID3/process" -H 'Content-Type: applicatio
 echo "$PROC" | grep -q '"jobId"' && ok "reprocess accepted (202 + jobId)" || bad "reprocess: $PROC"
 api -X DELETE "$BASE/api/scenes/$SID3" > /dev/null
 
+# 5c. resumable camera path: chunked session -> attach (single) and
+# chunked session -> stage-upload (passes). Tiny 1-chunk files suffice.
+SID4=$(api -X POST "$BASE/api/scenes" -H 'Content-Type: application/json' -d '{"name":"qa resumable"}' | python3 -c "import json,sys; print(json.load(sys.stdin).get('sceneId',''))")
+SZ1=$(stat -f%z /tmp/wl-s1.mp4 2>/dev/null || stat -c%s /tmp/wl-s1.mp4)
+SZ2=$(stat -f%z /tmp/wl-s2.mp4 2>/dev/null || stat -c%s /tmp/wl-s2.mp4)
+UP=$(api -X POST "$BASE/api/uploads" -H 'Content-Type: application/json' -d "{\"filename\":\"cam.mp4\",\"size\":$SZ1,\"mime\":\"video/mp4\",\"chunkSize\":1048576}")
+UPID=$(echo "$UP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('uploadId',''))")
+curl -s -H "Cookie: $HDR" -X PUT "$BASE/api/uploads/$UPID/chunks/0" --data-binary @/tmp/wl-s1.mp4 -o /dev/null
+curl -s -H "Cookie: $HDR" -X POST "$BASE/api/uploads/$UPID/complete" -o /dev/null
+ATT=$(api -X POST "$BASE/api/scenes/$SID4/attach" -H 'Content-Type: application/json' -d "{\"uploadId\":\"$UPID\"}")
+echo "$ATT" | grep -q '"storagePath"' && ok "attach completed upload as source video" || bad "attach: $ATT"
+# stage-upload both passes from completed sessions, then finalize joins them
+for i in 0 1; do
+  f=/tmp/wl-s1.mp4; sz=$SZ1; [ $i = 1 ] && f=/tmp/wl-s2.mp4 && sz=$SZ2
+  U=$(api -X POST "$BASE/api/uploads" -H 'Content-Type: application/json' -d "{\"filename\":\"cam.mp4\",\"size\":$sz,\"mime\":\"video/mp4\",\"chunkSize\":1048576}")
+  uid=$(echo "$U" | python3 -c "import json,sys; print(json.load(sys.stdin).get('uploadId',''))")
+  curl -s -H "Cookie: $HDR" -X PUT "$BASE/api/uploads/$uid/chunks/0" --data-binary @$f -o /dev/null
+  curl -s -H "Cookie: $HDR" -X POST "$BASE/api/uploads/$uid/complete" -o /dev/null
+  api -X POST "$BASE/api/scenes/$SID4/passes/stage-upload" -H 'Content-Type: application/json' -d "{\"uploadId\":\"$uid\",\"index\":$i}" > /dev/null
+done
+FIN2=$(api -X POST "$BASE/api/scenes/$SID4/passes/finalize" -H 'Content-Type: application/json' -d '{"count":2}')
+echo "$FIN2" | grep -q '"passes":2' && ok "stage-upload + finalize joins" || bad "stage-upload finalize: $FIN2"
+api -X DELETE "$BASE/api/scenes/$SID4" > /dev/null
+
 # 6. delete + gone
 DEL=$(api -X DELETE "$BASE/api/scenes/$SID")
 echo "$DEL" | grep -q "$SID" && ok "delete scene" || bad "delete: $DEL"

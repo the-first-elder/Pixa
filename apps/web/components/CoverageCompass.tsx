@@ -1,8 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import {
+  SECTORS,
+  accumulateDwell,
+  coveredFromDwell,
+  largestGapHint,
+  sectorFor,
+  tiltFlags,
+} from '@/lib/coverage-logic';
 
-const SECTORS = 12; // 30° each
+export { SECTORS };
 
 export interface CompassState {
   supported: boolean;
@@ -15,8 +23,9 @@ export interface CompassState {
 
 /**
  * Coverage compass from device orientation (gyro/compass).
- * Marks which yaw sectors have been filmed with acceptable quality and
- * whether the user ever tilted to ceilings/floors. Gracefully absent
+ * Sectors are relative to the heading where filming started and require
+ * ~1.2s of dwell at acceptable quality — sweeps don't count, which is
+ * what keeps the UI honest about reconstruction gaps. Gracefully absent
  * where the API doesn't exist (desktop).
  */
 export function useCoverageCompass(active: boolean, qualityOk: boolean) {
@@ -28,10 +37,13 @@ export function useCoverageCompass(active: boolean, qualityOk: boolean) {
     lookedDown: false,
     uncoveredHint: null,
   });
-  const coveredRef = useRef<boolean[]>(Array(SECTORS).fill(false));
+  const dwellRef = useRef<number[]>(Array(SECTORS).fill(0));
   const flagsRef = useRef({ up: false, down: false });
+  const startYawRef = useRef<number | null>(null);
+  const lastTimeRef = useRef<number>(0);
   const qualityRef = useRef(qualityOk);
   qualityRef.current = qualityOk;
+  const markRef = useRef<((a: number | null, b: number | null) => void) | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -43,39 +55,30 @@ export function useCoverageCompass(active: boolean, qualityOk: boolean) {
     let mounted = true;
 
     const mark = (alpha: number | null, beta: number | null) => {
-      if (alpha === null || !qualityRef.current) return;
-      const yaw = ((alpha % 360) + 360) % 360;
-      coveredRef.current[Math.floor(yaw / (360 / SECTORS)) % SECTORS] = true;
-      if (beta !== null) {
-        // Portrait upright ≈ 90. Tilt back (look up) drops beta; tilt forward raises it.
-        if (beta < 45) flagsRef.current.up = true;
-        if (beta > 135) flagsRef.current.down = true;
-      }
-      if (!mounted) return;
-      const covered = [...coveredRef.current];
-      const missing = covered
-        .map((c, i) => (!c ? i : -1))
-        .filter((i) => i >= 0);
-      let hint: string | null = null;
-      if (missing.length > 0 && covered.some(Boolean)) {
-        // Find the largest missing run and name its direction.
-        const names = ['ahead', 'right-ahead', 'right', 'right-behind', 'behind', 'left-behind', 'left', 'left-ahead'];
-        // Map sector index to rough direction relative to start (sector 0 = start).
-        const first = missing[0];
-        const dir = names[Math.round(((first / SECTORS) * 8) % 8)];
-        hint = `Unfilmed area ${dir} — turn slowly that way.`;
-      }
+      if (alpha === null) return;
+      if (startYawRef.current === null) startYawRef.current = alpha;
+      const now = performance.now();
+      const delta = lastTimeRef.current ? now - lastTimeRef.current : 0;
+      lastTimeRef.current = now;
+      const sector = sectorFor(alpha, startYawRef.current);
+      const changed = accumulateDwell(dwellRef.current, sector, delta, qualityRef.current);
+      const flags = tiltFlags(beta);
+      if (flags.up) flagsRef.current.up = true;
+      if (flags.down) flagsRef.current.down = true;
+      if (!mounted || (!changed && !flags.up && !flags.down)) return;
+      const covered = coveredFromDwell(dwellRef.current);
       setState({
         supported: true,
         permission: 'granted',
         covered,
         lookedUp: flagsRef.current.up,
         lookedDown: flagsRef.current.down,
-        uncoveredHint: hint,
+        uncoveredHint: largestGapHint(covered),
       });
     };
 
     const handler = (e: DeviceOrientationEvent) => mark(e.alpha, e.beta);
+    markRef.current = mark;
     if (DOE && typeof DOE.requestPermission === 'function') {
       setState((s) => ({ ...s, permission: 'needed' }));
       return () => {
@@ -97,12 +100,13 @@ export function useCoverageCompass(active: boolean, qualityOk: boolean) {
     try {
       const res = await DOE.requestPermission?.();
       if (res === 'granted') {
-        const handler = (e: DeviceOrientationEvent) => {
-          if (e.alpha === null || !qualityRef.current) return;
-          const yaw = ((e.alpha % 360) + 360) % 360;
-          coveredRef.current[Math.floor(yaw / (360 / SECTORS)) % SECTORS] = true;
-        };
-        window.addEventListener('deviceorientation', handler);
+        // Same mark() as the direct path (relative sectors + dwell + hint);
+        // the old iOS handler marked absolute sectors and never refreshed
+        // state, so granted iPhones showed a permanently empty compass.
+        const mark = markRef.current;
+        if (mark) {
+          window.addEventListener('deviceorientation', (e) => mark(e.alpha, e.beta));
+        }
         setState((s) => ({ ...s, permission: 'granted' }));
       } else {
         setState((s) => ({ ...s, permission: 'denied' }));
@@ -113,15 +117,18 @@ export function useCoverageCompass(active: boolean, qualityOk: boolean) {
   }
 
   function reset() {
-    coveredRef.current = Array(SECTORS).fill(false);
+    dwellRef.current = Array(SECTORS).fill(0);
     flagsRef.current = { up: false, down: false };
-    setState((s) => ({ ...s, covered: [...coveredRef.current], lookedUp: false, lookedDown: false, uncoveredHint: null }));
+    startYawRef.current = null;
+    lastTimeRef.current = 0;
+    setState((s) => ({ ...s, covered: [...dwellRef.current.map(() => false)], lookedUp: false, lookedDown: false, uncoveredHint: null }));
   }
 
   return { state, requestPermission, reset };
 }
 
-/** Circular coverage display: lit sectors filmed, dim sectors missing. */export function CompassDial({ covered }: { covered: boolean[] }) {
+/** Circular coverage display: lit sectors filmed, dim sectors missing. */
+export function CompassDial({ covered }: { covered: boolean[] }) {
   const r = 26;
   const cx = 32;
   const cy = 32;

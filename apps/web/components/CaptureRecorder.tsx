@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { stashFile, unstashFile } from '@/lib/file-stash';
+import { uploadChunked } from '@/lib/chunked-upload';
 import { useEffect, useRef, useState } from 'react';
 import { blurScore, brightness, frameDiff, GuideEngine, type CaptureAdvice } from '@/lib/capture-analysis';
 import { buildReport, type CaptureReport, type MetricSample, type WeakMoment } from '@/lib/capture-report';
@@ -616,9 +617,25 @@ export default function CaptureRecorder() {
       }
       if (!createRes.ok) throw new Error(`Scene creation failed (${createRes.status})`);
       const { sceneId } = (await createRes.json()) as { sceneId: string };
-      const form = new FormData();
-      form.append('video', blob, `capture.${ext}`);
-      await uploadXhr(`/api/scenes/${sceneId}/upload`, form, 'Upload failed');
+      if (blob.size > 4 * 1024 * 1024) {
+        // Resumable chunked path: a dropped connection resumes from the
+        // server bitmap instead of losing the whole upload (phones!).
+        const videoFile = new File([blob], `capture.${ext}`, { type: blob.type });
+        const { uploadId } = await uploadChunked(videoFile, (pct) => setUploadProgress(pct));
+        const att = await fetch(`/api/scenes/${sceneId}/attach`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadId }),
+        });
+        if (!att.ok) {
+          const body = (await att.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? `Attach failed (${att.status})`);
+        }
+      } else {
+        const form = new FormData();
+        form.append('video', blob, `capture.${ext}`);
+        await uploadXhr(`/api/scenes/${sceneId}/upload`, form, 'Upload failed');
+      }
       await fetch(`/api/scenes/${sceneId}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -627,6 +644,13 @@ export default function CaptureRecorder() {
       stopStream();
       router.push(`/scenes/${sceneId}`);
     } catch (e) {
+      if ((e as { status?: number })?.status === 401) {
+        // Session expired mid-upload: stash everything and sign in.
+        setUploadProgress(null);
+        setPhase('review');
+        await sendToSignIn('mp4');
+        return;
+      }
       setError(e instanceof Error ? e.message : 'Upload failed');
       setUploadProgress(null);
       setPhase('review');
@@ -677,17 +701,22 @@ export default function CaptureRecorder() {
       let doneBytes = 0;
       for (let i = 0; i < all.length; i++) {
         const f = all[i];
-        const form = new FormData();
-        form.append('pass', f, f.name);
-        form.append('index', String(i));
-        // Per-pass progress folds into the overall bar by byte share.
+        // Each pass uploads resumably (chunked, per-chunk retry, server
+        // bitmap), then stages by reference — a drop on pass 4 of 5 loses
+        // nothing already sent, however many passes there are.
         const startBytes = doneBytes;
-        await uploadXhr(
-          `/api/scenes/${sceneId}/passes/stage`,
-          form,
-          `Pass ${i + 1} upload failed`,
-          (pct) => setUploadProgress(Math.round(((startBytes + (f.size * pct) / 100) / totalBytes) * 100)),
+        const { uploadId } = await uploadChunked(f, (pct) =>
+          setUploadProgress(Math.round(((startBytes + (f.size * pct) / 100) / totalBytes) * 100)),
         );
+        const st = await fetch(`/api/scenes/${sceneId}/passes/stage-upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadId, index: i }),
+        });
+        if (!st.ok) {
+          const body = (await st.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? `Pass ${i + 1} staging failed (${st.status})`);
+        }
         doneBytes += f.size;
         setUploadProgress(Math.round((doneBytes / totalBytes) * 100));
       }
@@ -708,6 +737,13 @@ export default function CaptureRecorder() {
       stopStream();
       router.push(`/scenes/${sceneId}`);
     } catch (e) {
+      if ((e as { status?: number })?.status === 401) {
+        // Session expired mid-upload: stash everything and sign in.
+        setUploadProgress(null);
+        setPhase('review');
+        await sendToSignIn('mp4');
+        return;
+      }
       setError(e instanceof Error ? e.message : 'Upload failed');
       setUploadProgress(null);
       setPhase('review');
