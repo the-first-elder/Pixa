@@ -74,6 +74,10 @@ def main():
         for it in (7000, 15000, 30000):
             flags = spirula._quality_flags(it)
             assert "--disable-viewer" in flags and "--progressive-resolution" in flags
+            # A/B-proven harmful at 0.1/0.05 (PSNR 20.6 vs 29.6): keep out.
+            assert "--depth-distortion-reg" not in flags
+            assert "--normal-distortion-reg" not in flags
+            assert "strong" not in flags  # floater stays mild (28.2 vs 29.6)
         assert spirula._train_timeout(7000) < spirula._train_timeout(15000) < spirula._train_timeout(30000)
         ok("tier profiles (sfm/train/timeout/viewer-off)")
     except AssertionError as e:

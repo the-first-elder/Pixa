@@ -245,7 +245,12 @@ def _quality_flags(iterations: int) -> list[str]:
     Progressive resolution settles coarse geometry before full-res detail;
     mild distraction robustness ignores people moving through the capture.
     The viewer is disabled: it added a fixed-port bottleneck and no value in
-    a headless pipeline. The exact command is logged for reproducibility."""
+    a headless pipeline. The exact command is logged for reproducibility.
+
+    A/B (2000 iters, same workspace, 2026-10-30): mild floater PSNR 29.62 /
+    SSIM 0.9392 vs strong floater 28.17 / 0.9233 vs strong + depth/normal
+    distortion regs (0.1/0.05) 20.59 / 0.9033. Solidity regs HURT at these
+    weights — do not re-add without a full-length A/B proving otherwise."""
     tier = _tier(iterations)
     common = ["--floater-suppression", "mild",
               "--progressive-resolution", "1",

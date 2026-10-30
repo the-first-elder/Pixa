@@ -257,8 +257,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         const spark = new SparkRenderer({
           renderer,
           enableLod: useLod,
-          lodSplatScale: 1.0,
-          lodRenderScale: 1.0,
+          lodSplatScale: 1.5,
+          lodRenderScale: 0.8,
+          focalAdjustment: 1.6,
           onDirty: () => {
             needsRender = true;
           },
