@@ -779,7 +779,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
             className={`rounded px-2 py-1 ${mode === 'rooms' ? 'bg-white text-black' : 'text-neutral-300'} disabled:opacity-40`}
             title={meshReady ? 'Eye-level walk with walls and floor' : 'Collision mesh still building'}
           >
-            Rooms
+            Walk
           </button>
           {mode === 'walk' && (
             <span className="px-2 text-neutral-500">click canvas for mouse-look · WASD + Space/C · Shift sprint · floors respected</span>
