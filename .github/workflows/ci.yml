@@ -4,6 +4,8 @@
 # - typecheck: tsc across all workspaces
 # - worker-smoke: python compile + imports + CLI parse of the reconstruction worker
 # - notify-unit: offline notify.py tests (stamp-before-send, fail-closed, skips)
+# - worker-perf: generation regressions (tiers, adaptive fps, portrait bounds,
+#   train-slot lock, SPZ finalize) + admission-control units
 # - notifications: offline unit tests against an isolated STORAGE_DIR
 # - auth: HTTP auth matrix + identity regression (stable numeric accepted,
 #   poisoned uuid rejected) against a throwaway prod server with dummy creds
@@ -69,6 +71,24 @@ jobs:
         with:
           python-version: '3.13'
       - run: STORAGE_DIR=/tmp/wl-ntest python3 scripts/test-notify.py
+
+  worker-perf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: npm ci
+      - name: Worker generation/perf regressions
+        run: python3 scripts/test-worker-perf.py
+      - name: Admission control units
+        run: STORAGE_DIR=/tmp/wl-admtest npx tsx --conditions react-server scripts/test-admission.mts
 
   auth:
     runs-on: ubuntu-latest
@@ -183,7 +203,7 @@ jobs:
   deploy-edge:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
-    needs: [typecheck, worker-smoke, notify-unit, notifications, auth, scenes, longvideo]
+    needs: [typecheck, worker-smoke, notify-unit, worker-perf, notifications, auth, scenes, longvideo]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

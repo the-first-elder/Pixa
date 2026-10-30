@@ -74,6 +74,17 @@ expect 401 "anon notifications list" "$BASE/api/notifications"
 # Legacy records grandfathered (read open).
 expect 200 "legacy scene read" "$BASE/api/scenes/scene_leg"
 
+# Asset streaming: full body carries ETag + Accept-Ranges; a Range request
+# gets 206 with Content-Range; If-None-Match revalidates to 304.
+HDRS=$(curl -s -o /dev/null -D - "$BASE/api/scenes/scene_pub/asset")
+echo "$HDRS" | grep -qi "^etag:" && echo "$HDRS" | grep -qi "accept-ranges: bytes" \
+  && ok "asset ETag + Accept-Ranges" || bad "asset streaming headers: $HDRS"
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "Range: bytes=0-3" "$BASE/api/scenes/scene_pub/asset")
+[ "$code" = "206" ] && ok "asset range -> 206" || bad "asset range -> $code"
+ETAG=$(echo "$HDRS" | grep -i "^etag:" | tr -d '\r' | awk '{print $2}')
+code=$(curl -s -o /dev/null -w "%{http_code}" -H "If-None-Match: $ETAG" "$BASE/api/scenes/scene_pub/asset")
+[ "$code" = "304" ] && ok "asset revalidate -> 304" || bad "asset revalidate -> $code"
+
 # Owner-stamped isolation: private scenes are not enumerable anon.
 expect 404 "owned-private scene read anon" "$BASE/api/scenes/scene_own"
 expect 401 "owned-private PATCH anon" -X PATCH "$BASE/api/scenes/scene_own" -H 'Content-Type: application/json' -d '{"name":"hijack"}'

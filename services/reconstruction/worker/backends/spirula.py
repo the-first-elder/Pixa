@@ -486,9 +486,12 @@ def _convert_to_spz(asset_path: str, scene_id: str,
             [*cmd, asset_path, "-N", "-w", dest],
             capture_output=True, text=True, timeout=900,
             cwd=repo_root, check=False)
-        if p.returncode != 0 or not os.path.exists(dest) \
-                or os.path.getsize(dest) < 1024:
+        if p.returncode != 0 or not os.path.exists(dest):
             return None
+        # Format check, not a size guess: SPZ files carry the NGSP magic.
+        with open(dest, "rb") as f:
+            if f.read(4) != b"NGSP":
+                return None
         return dest
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -530,10 +533,18 @@ def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> lis
     # Collision mesh for rooms-mode walking (viewer auto-discovers it).
     mesh_base = os.path.join(storage, "assets", scene_id, "mesh")
     os.makedirs(os.path.dirname(mesh_base), exist_ok=True)
-    run_step("mesh", [binary(), "mesh", asset_path,
-                      "--data", os.path.join(workdir, "workspace"),
-                      "--data-format", "colmap",
-                      "--format", "glb", "--output", mesh_base], 900)
+    try:
+        mesh_cmd = [binary(), "mesh", asset_path,
+                    "--data", os.path.join(workdir, "workspace"),
+                    "--data-format", "colmap",
+                    "--format", "glb", "--output", mesh_base]
+    except SpirulaError as e:
+        # A missing binary must degrade the finish, never flip a trained
+        # job to failed (binary() raises before run_step can catch it).
+        notes.append(f"mesh: skipped ({e})")
+        mesh_cmd = None
+    if mesh_cmd is not None:
+        run_step("mesh", mesh_cmd, 900)
     # Collision meshes come out at 15-50MB — too heavy for an invisible
     # walk proxy the viewer downloads. Simplify to ~8% in place; on any
     # failure the full mesh stands (rooms mode still works, just slower).

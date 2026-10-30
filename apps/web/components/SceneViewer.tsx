@@ -20,7 +20,7 @@ export interface CameraCommand {
 export interface ViewerHandle {
   flyTo: (cmd: CameraCommand) => void;
   highlight: (positions: [number, number, number][]) => number;
-  setMode: (mode: 'orbit' | 'walk') => void;
+  setMode: (mode: ViewerMode) => void;
 }
 
 export type ViewerMode = 'orbit' | 'walk' | 'rooms';
@@ -64,6 +64,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
   const mountRef = useRef<HTMLDivElement>(null);
   const flyRef = useRef<(cmd: CameraCommand) => void>(() => {});
   const highlightRef = useRef<(positions: [number, number, number][]) => number>(() => 0);
+  const eyeActionRef = useRef<(action: 'up' | 'down' | 'reset') => void>(() => {});
+  const joyRef = useRef<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false });
+  const [joyKnob, setJoyKnob] = useState({ x: 0, y: 0 });
   const [status, setStatus] = useState<ViewerStatus>('loading-manifest');
   const [detail, setDetail] = useState<string>('');
   const [loadProgress, setLoadProgress] = useState<{ loaded: number; total: number } | null>(null);
@@ -180,7 +183,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         meshReadyRef.current = (ready: boolean) => setMeshReady(ready);
 
         const keys = new Set<string>();
-        const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+        const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'Space', 'KeyC'];
         const onKeyDown = (e: KeyboardEvent) => {
           // Never hijack typing: chat input, buttons, and text fields keep keys.
           const t = e.target as HTMLElement | null;
@@ -313,6 +316,29 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         window.addEventListener('pointermove', onPointerMove);
         window.addEventListener('pointerup', onPointerUp);
 
+        // Pointer-lock look for walk/rooms on precise pointers: click the
+        // canvas to capture the mouse (Esc releases). Drag-look above stays
+        // as the touch fallback.
+        const onCanvasClick = () => {
+          if (
+            (modeRef.current === 'walk' || modeRef.current === 'rooms') &&
+            window.matchMedia('(pointer: fine)').matches
+          ) {
+            renderer.domElement.requestPointerLock?.();
+          }
+        };
+        const onLockMove = (e: MouseEvent) => {
+          if (document.pointerLockElement !== renderer.domElement) return;
+          if (modeRef.current !== 'walk' && modeRef.current !== 'rooms') return;
+          euler.setFromQuaternion(camera.quaternion);
+          euler.y -= e.movementX * 0.0022;
+          euler.x = Math.max(-1.45, Math.min(1.45, euler.x - e.movementY * 0.0022));
+          camera.quaternion.setFromEuler(euler);
+          needsRender = true;
+        };
+        renderer.domElement.addEventListener('click', onCanvasClick);
+        document.addEventListener('mousemove', onLockMove);
+
         // Spark streams the asset itself (its loader reports byte progress):
         // no manual Blob copy, so peak memory stays near the decoded scene
         // instead of raw bytes + decoded splats. API URLs carry no file
@@ -410,6 +436,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         const walkRight = new THREE.Vector3();
         const walkMove = new THREE.Vector3();
         const walkVel = new THREE.Vector3();
+        let bobPhase = 0;
         const flatDir = new THREE.Vector3();
         const raycaster = new THREE.Raycaster();
         const downDir = new THREE.Vector3(0, -1, 0);
@@ -420,6 +447,29 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         // in the room rather than flying above it.
         snapRef.current = () => {
           if (colliders.length === 0) return;
+          // Enter the body at a real captured viewpoint when arriving from
+          // far outside (orbit spawn): those are proven in-room positions.
+          const vps = (manifest.viewpoints ?? [])
+            .filter((v) => v.position)
+            .map((v) => ({
+              pos: toWorld(v.position as [number, number, number]),
+              tgt: v.target ? toWorld(v.target) : null,
+            }));
+          if (vps.length > 0) {
+            let best = vps[0];
+            let bestDist = Infinity;
+            for (const v of vps) {
+              const d = v.pos.distanceTo(camera.position);
+              if (d < bestDist) {
+                bestDist = d;
+                best = v;
+              }
+            }
+            if (bestDist > boundRadius * 0.35) {
+              camera.position.copy(best.pos);
+              if (best.tgt) camera.lookAt(best.tgt);
+            }
+          }
           raycaster.set(camera.position, downDir);
           raycaster.far = Math.max(3, boundRadius);
           const hits = raycaster.intersectObjects(colliders, false);
@@ -430,6 +480,17 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           snapEuler.x = 0;
           snapEuler.z = 0;
           camera.quaternion.setFromEuler(snapEuler);
+        };
+        eyeActionRef.current = (action) => {
+          if (action === 'reset') eyeOffsetRef.current = eyeOffsetBase;
+          else {
+            const step = eyeOffsetBase * 0.15 * (action === 'up' ? 1 : -1);
+            eyeOffsetRef.current = Math.min(
+              eyeOffsetBase * 2.5,
+              Math.max(0.05, eyeOffsetRef.current + step),
+            );
+          }
+          needsRender = true;
         };
         const tryStep = (step: THREE.Vector3): boolean => {
           // Slide along walls: full step, else x-only, else z-only, else stop.
@@ -465,9 +526,11 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           const now = performance.now();
           const dt = Math.min(0.1, (now - lastT) / 1000);
           lastT = now;
-          if (modeRef.current === 'rooms' && keys.size > 0 && colliders.length > 0) {
+          if (modeRef.current === 'rooms' && colliders.length > 0) {
             // Eye-level walk: horizontal camera-relative motion, wall slide,
-            // floor snap. Speed scales with the scene; +/- adjusts eye height.
+            // floor snap. Runs every frame (not only while keys are held) so
+            // deceleration, floor snap, and head-bob stay alive. Speed scales
+            // with the scene; Shift sprints; +/- adjusts eye height.
             camera.getWorldDirection(walkDir);
             flatDir.set(walkDir.x, 0, walkDir.z);
             if (flatDir.lengthSq() < 1e-6) flatDir.set(0, 0, -1);
@@ -478,8 +541,13 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
             if (keys.has('KeyS') || keys.has('ArrowDown')) walkMove.sub(flatDir);
             if (keys.has('KeyD') || keys.has('ArrowRight')) walkMove.add(walkRight);
             if (keys.has('KeyA') || keys.has('ArrowLeft')) walkMove.sub(walkRight);
+            const joy = joyRef.current;
+            if (joy.active && (Math.abs(joy.x) > 0.08 || Math.abs(joy.y) > 0.08)) {
+              walkMove.addScaledVector(flatDir, -joy.y).addScaledVector(walkRight, joy.x);
+            }
+            const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1.9 : 1;
             if (walkMove.lengthSq() > 0) {
-              walkMove.normalize().multiplyScalar(boundRadius * 0.45);
+              walkMove.normalize().multiplyScalar(boundRadius * 0.45 * sprint);
               walkVel.lerp(walkMove, Math.min(1, dt * 7));
             } else {
               // Smooth deceleration instead of an abrupt stop.
@@ -489,13 +557,17 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
               const step = walkVel.clone().multiplyScalar(dt);
               if (tryStep(step)) needsRender = true;
             }
+            // Subtle head-bob while moving: presence without seasickness.
+            const speedNow = walkVel.length();
+            if (speedNow > 0.05) bobPhase += dt * (5 + speedNow * 1.5);
+            const bobY = Math.sin(bobPhase) * eyeOffsetRef.current * 0.02 * Math.min(1, speedNow);
             // Floor snap: stay at eye height above the mesh floor when found;
             // keep altitude over unmeshed holes instead of falling through.
             raycaster.set(camera.position, downDir);
             raycaster.far = eyeOffsetRef.current + 1.5;
             const hits = raycaster.intersectObjects(colliders, false);
             if (hits.length > 0) {
-              const targetY = hits[0].point.y + eyeOffsetRef.current;
+              const targetY = hits[0].point.y + eyeOffsetRef.current + bobY;
               camera.position.y += (targetY - camera.position.y) * Math.min(1, dt * 6);
               needsRender = true;
             }
@@ -518,7 +590,7 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
               camera.position.copy(boundCenter).addScaledVector(off.normalize(), boundRadius);
               needsRender = true;
             }
-          } else if (modeRef.current === 'walk' && (keys.size > 0)) {
+          } else if (modeRef.current === 'walk' && (keys.size > 0 || joyRef.current.active)) {
             camera.getWorldDirection(walkDir);
             walkRight.crossVectors(walkDir, camera.up).normalize();
             walkMove.set(0, 0, 0);
@@ -526,13 +598,30 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
             if (keys.has('KeyS') || keys.has('ArrowDown')) walkMove.sub(walkDir);
             if (keys.has('KeyD') || keys.has('ArrowRight')) walkMove.add(walkRight);
             if (keys.has('KeyA') || keys.has('ArrowLeft')) walkMove.sub(walkRight);
+            if (keys.has('Space')) walkMove.y += 1;
+            if (keys.has('KeyC')) walkMove.y -= 1;
+            const joy = joyRef.current;
+            if (joy.active && (Math.abs(joy.x) > 0.08 || Math.abs(joy.y) > 0.08)) {
+              walkMove.addScaledVector(walkDir, -joy.y).addScaledVector(walkRight, joy.x);
+            }
             if (walkMove.lengthSq() > 0) {
-              walkMove.normalize().multiplyScalar(boundRadius * 0.3 * dt);
+              const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1.9 : 1;
+              walkMove.normalize().multiplyScalar(boundRadius * 0.3 * sprint * dt);
               camera.position.add(walkMove);
               // Clamp to the capture volume: free-fly, not clip-through.
               const off = camera.position.clone().sub(boundCenter);
               if (off.length() > boundRadius) {
                 camera.position.copy(boundCenter).addScaledVector(off.normalize(), boundRadius);
+              }
+              // Floor respect: flying may roam, but not sink through floors.
+              if (colliders.length > 0) {
+                raycaster.set(camera.position, downDir);
+                raycaster.far = Math.max(3, boundRadius);
+                const floorHits = raycaster.intersectObjects(colliders, false);
+                if (floorHits.length > 0) {
+                  const floorY = floorHits[0].point.y + 0.12;
+                  if (camera.position.y < floorY) camera.position.y = floorY;
+                }
               }
               needsRender = true;
             }
@@ -585,6 +674,11 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           renderer.domElement.removeEventListener('pointerdown', onPointerDown);
           window.removeEventListener('pointermove', onPointerMove);
           window.removeEventListener('pointerup', onPointerUp);
+          renderer.domElement.removeEventListener('click', onCanvasClick);
+          document.removeEventListener('mousemove', onLockMove);
+          if (document.pointerLockElement === renderer.domElement) {
+            document.exitPointerLock?.();
+          }
           controls.dispose();
           markerGeo.dispose();
           markerMat.dispose();
@@ -660,11 +754,58 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
             Rooms
           </button>
           {mode === 'walk' && (
-            <span className="px-2 text-neutral-500">drag to look · WASD to move · free-fly, no collision</span>
+            <span className="px-2 text-neutral-500">click canvas for mouse-look · WASD + Space/C · Shift sprint · floors respected</span>
           )}
           {mode === 'rooms' && (
-            <span className="px-2 text-neutral-500">drag to look · WASD to walk · +/− eye height · stays inside, walls + ceiling constrain</span>
+            <>
+              <span className="px-2 text-neutral-500">click canvas for mouse-look · WASD walk · Shift sprint · walls + ceiling constrain</span>
+              <span className="ml-1 flex items-center gap-0.5 border-l border-white/10 pl-2">
+                <span className="px-1 text-neutral-500">eye</span>
+                <button type="button" onClick={() => eyeActionRef.current('down')} className="rounded px-1.5 py-0.5 text-neutral-300 hover:bg-white/10" title="Lower eye height">−</button>
+                <button type="button" onClick={() => eyeActionRef.current('reset')} className="rounded px-1.5 py-0.5 text-neutral-300 hover:bg-white/10" title="Reset eye height">⟲</button>
+                <button type="button" onClick={() => eyeActionRef.current('up')} className="rounded px-1.5 py-0.5 text-neutral-300 hover:bg-white/10" title="Raise eye height">+</button>
+              </span>
+            </>
           )}
+        </div>
+      )}
+      {status === 'ready' && mode !== 'orbit' && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/60" />
+      )}
+      {status === 'ready' && mode !== 'orbit' && (
+        <div
+          className="absolute bottom-24 left-4 hidden h-28 w-28 touch-none select-none rounded-full border border-white/20 bg-black/40 [@media(pointer:coarse)]:block"
+          onPointerDown={(e) => {
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            joyRef.current.active = true;
+          }}
+          onPointerMove={(e) => {
+            if (!joyRef.current.active) return;
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            let dx = (e.clientX - (rect.left + rect.width / 2)) / (rect.width / 2);
+            let dy = (e.clientY - (rect.top + rect.height / 2)) / (rect.height / 2);
+            const len = Math.hypot(dx, dy);
+            if (len > 1) {
+              dx /= len;
+              dy /= len;
+            }
+            joyRef.current.x = dx;
+            joyRef.current.y = dy;
+            setJoyKnob({ x: dx * 34, y: dy * 34 });
+          }}
+          onPointerUp={() => {
+            joyRef.current = { x: 0, y: 0, active: false };
+            setJoyKnob({ x: 0, y: 0 });
+          }}
+          onPointerCancel={() => {
+            joyRef.current = { x: 0, y: 0, active: false };
+            setJoyKnob({ x: 0, y: 0 });
+          }}
+        >
+          <div
+            className="absolute left-1/2 top-1/2 h-12 w-12 rounded-full bg-white/25"
+            style={{ transform: `translate(calc(-50% + ${joyKnob.x}px), calc(-50% + ${joyKnob.y}px))` }}
+          />
         </div>
       )}
     </div>
