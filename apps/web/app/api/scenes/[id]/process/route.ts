@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createJob, getScene, waitingTrainerCount } from '@/lib/store';
+import { createJob, getScene, reconstructionAdmissionError } from '@/lib/store';
 import { canWrite, sessionUser } from '@/lib/authz';
 import { spawnWorker } from '@/lib/worker';
-
-/** Max queued-behind-trainer jobs. Beyond this, fail fast instead of piling up. */
-const MAX_QUEUE = 3;
 
 /**
  * POST /api/scenes/:sceneId/process — create a reconstruction job and launch
@@ -51,11 +48,14 @@ export async function POST(
     return NextResponse.json({ error: `Unknown backend: ${backend}` }, { status: 400 });
   }
 
-  if (backend === 'spirula' && waitingTrainerCount() >= MAX_QUEUE) {
-    return NextResponse.json(
-      { error: `Trainer queue is full (${MAX_QUEUE} waiting). Wait for a slot or cancel a queued job before submitting.` },
-      { status: 429 },
-    );
+  if (backend === 'spirula') {
+    // Fair admission: pipeline stages run concurrently across users, the
+    // GPU trainer is slot-bound in the worker. Reject early with the
+    // actionable limit instead of spawning a process that queues forever.
+    const admissionError = reconstructionAdmissionError(scene.ownerId ?? user?.uid ?? null);
+    if (admissionError) {
+      return NextResponse.json({ error: admissionError }, { status: 429 });
+    }
   }
   const job = createJob(scene.id, 'reconstruction', scene.ownerId ?? user?.uid ?? null);
   const args = ['run-job', job.id, '--video', video, '--backend', backend,

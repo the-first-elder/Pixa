@@ -20,7 +20,7 @@ export default function UploadForm() {
     "idle" | "creating" | "uploading" | "starting" | "error"
   >("idle");
   const [backend, setBackend] = useState("spirula");
-  const [quality, setQuality] = useState("fast");
+  const [quality, setQuality] = useState("balanced");
   const [allowPartial, setAllowPartial] = useState(false);
   const [progress, setProgress] = useState(0);
 

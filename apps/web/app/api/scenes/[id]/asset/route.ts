@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { getScene } from '@/lib/store';
 import { canRead, sessionUser } from '@/lib/authz';
 import { readyAssetForScene } from '@/lib/store';
+import { streamFile } from '@/lib/file-response';
 
 /**
  * GET /api/scenes/:sceneId/asset — stream the verified reconstruction asset.
@@ -11,7 +12,7 @@ import { readyAssetForScene } from '@/lib/store';
  * 404, never a substitute file.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -24,12 +25,7 @@ export async function GET(
   if (!asset || !existsSync(asset.assetPath)) {
     return NextResponse.json({ error: 'No visual asset for this scene yet' }, { status: 404 });
   }
-  const bytes = readFileSync(asset.assetPath);
-  return new Response(bytes, {
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': String(bytes.length),
-      'Cache-Control': 'private, max-age=3600',
-    },
-  });
+  // Streamed, never buffered: a 39MB SPZ (or legacy 452MB PLY) must not
+  // block the event loop for every concurrent viewer.
+  return streamFile(asset.assetPath, 'application/octet-stream', req);
 }

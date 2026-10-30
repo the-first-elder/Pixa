@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'node:child_process';
 import { getRecording } from '@/lib/recordings';
+import { reconstructionAdmissionError } from '@/lib/store';
 import { canWrite, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
 import { workerDir } from '@/lib/worker';
@@ -41,6 +42,12 @@ export async function POST(
   }
   if (!['local', 'kiri', 'runpod', 'spirula'].includes(backend)) {
     return NextResponse.json({ error: `Unknown backend: ${backend}` }, { status: 400 });
+  }
+  if (backend === 'spirula') {
+    const admissionError = reconstructionAdmissionError(rec.ownerId ?? user?.uid ?? null);
+    if (admissionError) {
+      return NextResponse.json({ error: admissionError }, { status: 429 });
+    }
   }
   const args = ['process-segment', '--recording', id, '--segment', seg, '--backend', backend, '--iterations', String(iterations)];
   if (allowPartial) args.push('--allow-partial');

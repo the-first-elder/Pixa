@@ -5,7 +5,7 @@
  * empty state. Never a fabricated scene.
  */
 import 'server-only';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { MANIFEST_VERSION, type SceneManifest } from '@pixa/scene-schema';
 import { readyAssetForScene } from './store';
@@ -32,6 +32,12 @@ export function manifestForScene(sceneId: string): SceneManifest | null {
   } catch {
     viewpoints = [];
   }
+  let sizeBytes: number | null = null;
+  try {
+    sizeBytes = statSync(asset.assetPath).size;
+  } catch {
+    sizeBytes = null;
+  }
   return {
     version: MANIFEST_VERSION,
     sceneId,
@@ -41,7 +47,7 @@ export function manifestForScene(sceneId: string): SceneManifest | null {
       format: asset.format as SceneManifest['asset']['format'],
       location: `/api/scenes/${encodeURIComponent(sceneId)}/asset`,
       meshLocation,
-      sizeBytes: null,
+      sizeBytes,
     },
     coordinateSystem: asset.posesFormat ?? 'unknown',
     upCorrection,

@@ -17,6 +17,8 @@ Binary location: $WL_SPIRULA_BIN, else ~/.pixa/bin/spirula.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import glob
 import os
 import re
@@ -187,17 +189,146 @@ def _viewer_port_busy() -> bool:
         return s.connect_ex(("127.0.0.1", SPIRULA_VIEWER_PORT)) == 0
 
 
+def _tier(iterations: int) -> str:
+    if iterations >= 30000:
+        return "full"
+    if iterations >= 15000:
+        return "balanced"
+    return "fast"
+
+
+def _sfm_args(iterations: int) -> list[str]:
+    """SfM profile by tier. Full spends more of the compute budget on the
+    geometry everything else depends on; fast keeps SfM deliberately cheap."""
+    tier = _tier(iterations)
+    quality = {"fast": "medium", "balanced": "high", "full": "extreme"}[tier]
+    overlap = {"fast": "8", "balanced": "12", "full": "14"}[tier]
+    return ["--data-type", "video", "--pairs", "sequential", "--sequence", ".",
+            "--quality", quality, "--overlap", overlap]
+
+
+def _adaptive_fps(video: str, requested: float | None,
+                  iterations: int) -> float | None:
+    """Duration-aware frame sampling when the caller did not choose a rate.
+
+    Short captures benefit from denser views (better registration and detail);
+    long captures are bounded so SfM/training time stays sane. Explicit fps
+    always wins. Probe failure falls back to the historical 2 fps policy.
+    """
+    if requested is not None:
+        return requested
+    try:
+        duration = float(media.probe_video(video).get("duration") or 0)
+    except Exception:
+        return 2.0
+    if duration <= 0:
+        return 2.0
+    if duration <= 75:
+        return 3.0
+    if duration <= 240:
+        return 2.0
+    if duration <= 900:
+        return 1.5
+    return 1.0
+
+
+def _train_timeout(iterations: int) -> int:
+    """Tiered wall-clock ceilings so a preview cannot monopolize the queue."""
+    return {"fast": 45 * 60, "balanced": 2 * 60 * 60, "full": TRAIN_TIMEOUT}[
+        _tier(iterations)]
+
+
 def _quality_flags(iterations: int) -> list[str]:
     """Training quality flags by tier (mapped from iterations, the tier knob).
     Defaults (medium, 1M cap, no floater suppression) visibly underperform on
     indoor rooms; ultra+2M+mild suppression is measured-safe on 24GB M4.
-    The exact command is logged to train.log for reproducibility."""
-    if iterations >= 30000:
+    Progressive resolution settles coarse geometry before full-res detail;
+    mild distraction robustness ignores people moving through the capture.
+    The viewer is disabled: it added a fixed-port bottleneck and no value in
+    a headless pipeline. The exact command is logged for reproducibility."""
+    tier = _tier(iterations)
+    common = ["--floater-suppression", "mild",
+              "--progressive-resolution", "1",
+              "--disable-viewer", "1", "--keep-viewer-alive", "0"]
+    if tier == "full":
         return ["--quality", "ultra", "--cap-max", "2000000",
-                "--floater-suppression", "mild"]
-    if iterations >= 15000:
-        return ["--quality", "high", "--floater-suppression", "mild"]
-    return []
+                "--distraction-robustness", "mild", *common]
+    if tier == "balanced":
+        return ["--quality", "high", "--cap-max", "1500000",
+                "--distraction-robustness", "mild", *common]
+    return ["--quality", "high", "--cap-max", "1000000",
+            "--train-resolution-divisor", "2", *common]
+
+
+def _train_slot_count() -> int:
+    try:
+        return max(1, min(4, int(os.environ.get("WL_TRAIN_SLOTS", "1"))))
+    except ValueError:
+        return 1
+
+
+def _acquire_train_slot(job_id: str, timeout: int):
+    """Acquire one cross-process GPU training slot (FIFO among waiting jobs).
+
+    Returns an open lock fd to hold for the whole train, or None when the job
+    was cancelled while queued. flock is released by the OS if the worker dies,
+    so a crash can never wedge the queue. WL_TRAIN_SLOTS may raise concurrency
+    on larger GPUs; the M4 Pro default stays 1 (unified-memory bound)."""
+    slots = _train_slot_count()
+    lock_dir = os.path.join(store.storage_dir(), "train-slots")
+    os.makedirs(lock_dir, exist_ok=True)
+    fds = []
+    try:
+        for i in range(slots):
+            fds.append(open(os.path.join(lock_dir, f"slot-{i}.lock"), "a+"))
+        deadline = time.time() + timeout
+        announced = False
+        while True:
+            try:
+                current = store.get_job(job_id)
+                if current["status"] == "failed":
+                    return None
+            except KeyError as e:
+                raise SpirulaError(
+                    "Job record disappeared while queued for the trainer.") from e
+            jobs = store._load("jobs.json")
+            candidates = [
+                j for j in jobs.values()
+                if j.get("id") == job_id or j.get("waitingForTrainer")
+            ]
+            candidates.sort(key=lambda j: (str(j.get("startedAt") or ""),
+                                           str(j.get("id") or "")))
+            eligible = {str(j.get("id")) for j in candidates[:slots]}
+            if job_id in eligible:
+                for fd in fds:
+                    try:
+                        fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except OSError:
+                        continue
+                    # Won a slot: detach it from the close-all cleanup below.
+                    fds.remove(fd)
+                    if job_id in jobs:
+                        jobs[job_id].pop("waitingForTrainer", None)
+                        jobs[job_id].pop("waitingSince", None)
+                        store._save("jobs.json", jobs)
+                    return fd
+            if job_id in jobs and not jobs[job_id].get("waitingForTrainer"):
+                jobs[job_id]["waitingForTrainer"] = True
+                jobs[job_id]["waitingSince"] = store.now()
+                store._save("jobs.json", jobs)
+            if not announced:
+                announced = True
+            if time.time() > deadline:
+                raise SpirulaError(
+                    "TRAINING_BUSY: waited over the limit and no trainer slot "
+                    "freed up. Retry later, or cancel a blocking job.")
+            time.sleep(5)
+    finally:
+        for fd in fds:
+            try:
+                fd.close()
+            except OSError:
+                pass
 
 
 def _train_and_watch(binpath: str, workspace: str, iterations: int,
@@ -209,42 +340,16 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
     "Training complete" marker, then terminate the whole process group.
     Returns the train.log path. Raises SpirulaError on timeout/failure text.
 
-    One trainer per machine (fixed viewer port): instead of failing when the
-    slot is busy, WAIT in line — the job record carries waitingForTrainer so
-    the UI can show queue position instead of an error.
+    GPU training slots are flock-guarded (WL_TRAIN_SLOTS, default 1): instead
+    of failing when busy, WAIT in FIFO order — the job record carries
+    waitingForTrainer so the UI can show queue position instead of an error.
+    Extraction/SfM of other jobs proceed concurrently; only this section is
+    slot-bound. The viewer is disabled, so the historical fixed-port
+    collision no longer limits concurrency at all.
     """
-    waited = 0
-    wait_logged = False
-    while _viewer_port_busy():
-        # A cancel while queued must stop the wait — not train a dead job.
-        try:
-            current = store.get_job(job_id)
-            if current["status"] == "failed":
-                return None
-        except KeyError:
-            raise SpirulaError("Job record disappeared while queued for the trainer.")
-        if waited == 0 or waited % 10 == 0:
-            jobs = store._load("jobs.json")
-            if job_id in jobs:
-                jobs[job_id]["waitingForTrainer"] = True
-                jobs[job_id]["waitingSince"] = store.now()
-                store._save("jobs.json", jobs)
-        if not wait_logged:
-            with open(os.path.join(workdir, "train.log"), "w", encoding="utf-8") as log:
-                log.write("Waiting for the trainer slot (another job is training)...\n")
-            wait_logged = True
-        time.sleep(20)
-        waited += 1
-        if waited * 20 > timeout:
-            raise SpirulaError(
-                "TRAINING_BUSY: waited over the limit and the trainer slot never "
-                "freed up. Retry later, or cancel the blocking job."
-            )
-    jobs = store._load("jobs.json")
-    if job_id in jobs:
-        jobs[job_id].pop("waitingForTrainer", None)
-        jobs[job_id].pop("waitingSince", None)
-        store._save("jobs.json", jobs)
+    slot_fd = _acquire_train_slot(job_id, timeout)
+    if slot_fd is None:
+        return None
     log_path = os.path.join(workdir, "train.log")
     cmd = [binpath, "train", "--data", workspace, "--data-format", "colmap",
            "--num-iterations", str(iterations),
@@ -345,6 +450,48 @@ def _train_and_watch(binpath: str, workspace: str, iterations: int,
                 store._save("jobs.json", jobs)
         except OSError:
             pass
+        try:
+            slot_fd.close()
+        except OSError:
+            pass
+
+
+def _repo_root() -> str:
+    # spirula.py lives at <root>/services/reconstruction/worker/backends/ —
+    # five dirnames up is the repo root (verified: scripts/ must exist there).
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    assert os.path.isdir(os.path.join(root, "scripts")), \
+        f"repo root resolution broken: {root}"
+    return root
+
+
+def _convert_to_spz(asset_path: str, scene_id: str,
+                    repo_root: str) -> str | None:
+    """Convert the trained PLY to SPZ for delivery (measured 452MB -> 39MB).
+
+    The PLY stays in the workdir as the archival/master artifact; the job
+    record points at the SPZ the viewer actually downloads. Any failure
+    keeps the PLY as the deliverable — conversion never fails a good train.
+    """
+    storage = store.storage_dir()
+    dest_dir = os.path.join(storage, "assets", scene_id)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, "splat.spz")
+    local_cli = os.path.join(repo_root, "node_modules", ".bin", "splat-transform")
+    cmd = ([local_cli] if os.path.exists(local_cli)
+           else ["npx", "-y", "@playcanvas/splat-transform"])
+    try:
+        p = subprocess.run(
+            [*cmd, asset_path, "-N", "-w", dest],
+            capture_output=True, text=True, timeout=900,
+            cwd=repo_root, check=False)
+        if p.returncode != 0 or not os.path.exists(dest) \
+                or os.path.getsize(dest) < 1024:
+            return None
+        return dest
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
 
 def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> list[str]:
@@ -360,27 +507,25 @@ def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> lis
         return ["finish skipped: job record unreadable"]
     if not scene_id:
         return ["finish skipped: no scene linked"]
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-    # spirula.py lives at <root>/services/reconstruction/worker/backends/ —
-    # five dirnames up is the repo root (verified: scripts/ must exist there).
-    assert os.path.isdir(os.path.join(repo_root, "scripts")), \
-        f"repo root resolution broken: {repo_root}"
+    repo_root = _repo_root()
     storage = store.storage_dir()
     env = {**os.environ, "STORAGE_DIR": storage}
 
-    def run_step(label: str, cmd: list[str], timeout: int) -> None:
+    def run_step(label: str, cmd: list[str], timeout: int) -> bool:
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                                cwd=repo_root, env=env, check=False)
             if p.returncode == 0:
                 notes.append(f"{label}: ok")
-            else:
-                notes.append(f"{label}: failed ({(p.stderr or p.stdout or '')[:120]})")
+                return True
+            notes.append(f"{label}: failed ({(p.stderr or p.stdout or '')[:120]})")
+            return False
         except subprocess.TimeoutExpired:
             notes.append(f"{label}: timed out")
+            return False
         except OSError as e:
             notes.append(f"{label}: could not run ({e})")
+            return False
 
     # Collision mesh for rooms-mode walking (viewer auto-discovers it).
     mesh_base = os.path.join(storage, "assets", scene_id, "mesh")
@@ -420,13 +565,26 @@ def _auto_finish(job_id: str, workdir: str, asset_path: str, sparse: str) -> lis
             notes.append(f"mesh-simplify: failed, kept full mesh{detail}")
             if os.path.exists(slim):
                 os.remove(slim)
-    # Navigation + leveling + coverage (repo scripts).
-    run_step("viewpoints", ["npx", "-y", "tsx", "scripts/derive-viewpoints.mts",
-                             "--scene", scene_id], 300)
-    run_step("level-world", [sys.executable, "scripts/level-world.py",
-                             "--scene", scene_id], 300)
-    run_step("coverage", ["npx", "-y", "tsx", "scripts/coverage.mts",
-                          "--scene", scene_id], 300)
+    # Spatial indexing: SAM video tracks -> per-instance entities ->
+    # registration/viewpoints/level/coverage (track-scene runs those steps
+    # itself). Without it the assistant is blind on a rendered scene.
+    # Requires META_API_KEY (spend is ~$0.04/scene, accounted in the sidecar);
+    # absent key -> navigation-only finish below, never a hard failure.
+    indexed = False
+    if os.environ.get("META_API_KEY"):
+        indexed = run_step(
+            "index", ["npx", "-y", "tsx", "scripts/track-scene.mts",
+                      "--scene", scene_id, "--yes"], 1800)
+    else:
+        notes.append("index: skipped (META_API_KEY not configured)")
+    if not indexed:
+        # Navigation + leveling + coverage (repo scripts).
+        run_step("viewpoints", ["npx", "-y", "tsx", "scripts/derive-viewpoints.mts",
+                                 "--scene", scene_id], 300)
+        run_step("level-world", [sys.executable, "scripts/level-world.py",
+                                 "--scene", scene_id], 300)
+        run_step("coverage", ["npx", "-y", "tsx", "scripts/coverage.mts",
+                               "--scene", scene_id], 300)
     return notes
 
 
@@ -456,18 +614,30 @@ def finalize_job(job_id: str, workdir: str, sparse_root: str | None = None,
               else os.path.join(workdir, "workspace", "sparse", "0"))
     images_dir = os.path.join(workdir, "workspace", "images")
     jobs = store._load("jobs.json")
+    scene_id = (jobs.get(job_id) or {}).get("sceneId")
+    # Deliver SPZ by default (measured 452MB PLY -> 39MB SPZ, seconds to
+    # convert); the PLY remains the master in the workdir. Fall back to PLY
+    # on any conversion failure — a downloadable scene beats a perfect one.
+    deliver_path, deliver_format = asset_path, "ply"
+    if scene_id:
+        converted = _convert_to_spz(asset_path, scene_id, _repo_root())
+        if converted:
+            deliver_path, deliver_format = converted, "spz"
     jobs[job_id]["asset"] = {
-        "assetPath": asset_path,
-        "format": "ply",
+        "assetPath": deliver_path,
+        "format": deliver_format,
         "posesPath": sparse if os.path.isdir(sparse) else None,
         "posesFormat": "colmap-sparse",
     }
     jobs[job_id].pop("detail", None)  # live ETA is meaningless once ready
     frames_b = len([f for f in os.listdir(images_dir) if f.endswith(".jpg")]) if os.path.isdir(images_dir) else None
+    reg = registered_count(os.path.join(sparse, "images.bin")) \
+        if os.path.isdir(sparse) else -1
     jobs[job_id]["diagnostics"] = {
         "cameraPosesEstimated": True,
-        "framesRegistered": None,
-        "framesRejected": None,
+        "framesRegistered": reg if reg >= 0 else None,
+        "framesRejected": (max(frames_b - reg, 0)
+                           if reg >= 0 and frames_b is not None else None),
         "framesB": frames_b,
         "coverageConcentratedInOneArea": None,
         "largeGapsOrUnstableRegions": None,
@@ -511,19 +681,20 @@ class SpirulaBackend:
             raise SpirulaError(f"Video not found: {video}")
         workdir = os.path.join(store.storage_dir(), "work", job["id"], "spirula")
         os.makedirs(workdir, exist_ok=True)
+        iterations = int(ctx.get("iterations", 30000))
         # Video frames need sequential matching (neighbours + loop closure),
-        # not the default individual-photo/exhaustive strategy. Override via
-        # ctx["sfmArgs"] when experimenting.
-        sfm_args = ctx.get("sfmArgs") or [
-            "--data-type", "video", "--pairs", "sequential", "--sequence", ".",
-        ]
+        # not the default individual-photo/exhaustive strategy. Tier profiles
+        # spend the SfM budget where it matters; override via ctx["sfmArgs"].
+        sfm_args = ctx.get("sfmArgs") or _sfm_args(iterations)
         fps = ctx.get("fps")
         if fps is not None:
             fps = float(fps)
             if not (0.25 <= fps <= 10):
                 raise SpirulaError(f"extract fps {fps} out of sane range 0.25..10")
+        else:
+            fps = _adaptive_fps(video, None, iterations)
         return {"workdir": workdir, "video": video,
-                "iterations": int(ctx.get("iterations", 30000)),
+                "iterations": iterations,
                 "allowPartial": bool(ctx.get("allowPartial", False)),
                 "fps": fps,
                 "sfmArgs": list(sfm_args)}
@@ -608,7 +779,7 @@ class SpirulaBackend:
                 train_workspace = partial
             store.transition(job_id, "reconstructing", progress=50)
             watched = _train_and_watch(binpath, train_workspace, handle["iterations"],
-                                       workdir, TRAIN_TIMEOUT, job_id)
+                                       workdir, _train_timeout(handle["iterations"]), job_id)
             if watched is None:
                 return store.get_job(job_id)  # cancelled while queued
             return finalize_job(job_id, workdir, train_workspace if train_workspace != workspace else None,

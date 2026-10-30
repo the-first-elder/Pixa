@@ -33,7 +33,13 @@ export type ViewerStatus =
   | 'error';
 
 interface Manifest {
-  asset: { location: string; assetType: string; format: string; meshLocation?: string | null };
+  asset: {
+    location: string;
+    assetType: string;
+    format: string;
+    meshLocation?: string | null;
+    sizeBytes?: number | null;
+  };
   upCorrection?: { quaternion: [number, number, number, number] } | null;
   viewpoints: Array<{
     id: string;
@@ -102,8 +108,17 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           '@sparkjsdev/spark',
         );        if (cancelled) return;
 
-        const renderer = new THREE.WebGLRenderer({ antialias: false });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        const renderer = new THREE.WebGLRenderer({
+          antialias: false,
+          powerPreference: 'high-performance',
+          stencil: false,
+        });
+        // Adaptive resolution: start at full quality (DPR<=2). Only step
+        // down if rendered frames are genuinely expensive, and recover
+        // when headroom returns — quality is the default, not a sacrifice.
+        const maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        let pixelRatioCap = maxPixelRatio;
+        renderer.setPixelRatio(pixelRatioCap);
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.0;
         const resize = () => {
@@ -229,8 +244,14 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           })();
         }
 
+        // Large scenes get Spark's LOD tree (distance-appropriate detail,
+        // full detail near the camera); small scenes render directly.
+        const useLod = (manifest.asset.sizeBytes ?? 0) >= 16 * 1024 * 1024;
         const spark = new SparkRenderer({
           renderer,
+          enableLod: useLod,
+          lodSplatScale: 1.0,
+          lodRenderScale: 1.0,
           onDirty: () => {
             needsRender = true;
           },
@@ -292,51 +313,28 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
         window.addEventListener('pointermove', onPointerMove);
         window.addEventListener('pointerup', onPointerUp);
 
-        // Download with progress first (SplatMesh gives no byte signal):
-        // stream the asset, report MB as they land, then hand Spark a
-        // blob URL. API URLs carry no file extension — declare the format
-        // explicitly instead of relying on URL sniffing.
-        const assetRes = await fetch(manifest.asset.location);
-        if (!assetRes.ok || !assetRes.body) {
-          throw new Error(`Asset download failed (${assetRes.status})`);
+        // Spark streams the asset itself (its loader reports byte progress):
+        // no manual Blob copy, so peak memory stays near the decoded scene
+        // instead of raw bytes + decoded splats. API URLs carry no file
+        // extension — declare the format explicitly, never URL sniffing.
+        if (!cancelled) {
+          setLoadProgress({ loaded: 0, total: manifest.asset.sizeBytes ?? 0 });
         }
-        const total = Number(assetRes.headers.get('content-length') || 0);
-        const reader = assetRes.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let loaded = 0;
-        let lastUi = 0;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (cancelled) {
-            reader.cancel().catch(() => {});
-            return;
-          }
-          chunks.push(value);
-          loaded += value.length;
-          const now = performance.now();
-          if (now - lastUi > 120) {
-            lastUi = now;
-            if (!cancelled) setLoadProgress({ loaded, total });
-          }
-        }
-        if (!cancelled) setLoadProgress({ loaded, total });
-        const blobUrl = URL.createObjectURL(
-          new Blob(chunks as BlobPart[], { type: 'application/octet-stream' }),
-        );
-        const revokeBlob = () => URL.revokeObjectURL(blobUrl);
-        if (cancelled) {
-          revokeBlob();
-          return;
-        }
-        setParsing(true); // bytes landed; geometry build has no signal
-
         const mesh = new SplatMesh({
-          url: blobUrl,
+          url: manifest.asset.location,
+          withCredentials: true,
           fileType:
             manifest.asset.format === 'spz'
               ? SplatFileType.SPZ
               : SplatFileType.PLY,
+          lod: useLod ? 'quality' : undefined,
+          enableLod: useLod,
+          onProgress: (event) => {
+            if (cancelled) return;
+            const total = event.total || manifest.asset.sizeBytes || 0;
+            setLoadProgress({ loaded: event.loaded, total });
+            if (total > 0 && event.loaded >= total) setParsing(true);
+          },
           onLoad: () => {
             if (cancelled) return;
             // Shared-link starting viewpoint wins; else the first derived
@@ -405,6 +403,9 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
 
         let raf = 0;
         let lastT = performance.now();
+        let renderFrames = 0;
+        let renderMsTotal = 0;
+        let lastRatioAdjust = performance.now();
         const walkDir = new THREE.Vector3();
         const walkRight = new THREE.Vector3();
         const walkMove = new THREE.Vector3();
@@ -549,14 +550,34 @@ const SceneViewer = forwardRef<ViewerHandle, { sceneId: string; initialViewpoint
           if (controls.update()) needsRender = true;
           if (needsRender) {
             needsRender = false;
+            const renderStart = performance.now();
             renderer.render(scene, camera);
+            const renderMs = performance.now() - renderStart;
+            renderFrames += 1;
+            renderMsTotal += renderMs;
+            if (renderFrames >= 45 && now - lastRatioAdjust > 1500) {
+              const avg = renderMsTotal / Math.max(1, renderFrames);
+              if (avg > 22 && pixelRatioCap > 1) {
+                pixelRatioCap = Math.max(1, pixelRatioCap - 0.25);
+                renderer.setPixelRatio(pixelRatioCap);
+                resize();
+                needsRender = true;
+              } else if (avg < 7 && pixelRatioCap < maxPixelRatio) {
+                pixelRatioCap = Math.min(maxPixelRatio, pixelRatioCap + 0.25);
+                renderer.setPixelRatio(pixelRatioCap);
+                resize();
+                needsRender = true;
+              }
+              renderFrames = 0;
+              renderMsTotal = 0;
+              lastRatioAdjust = now;
+            }
           }
         };
         loop();
         window.addEventListener('resize', resize);
 
         cleanup = () => {
-          revokeBlob();
           cancelAnimationFrame(raf);
           window.removeEventListener('resize', resize);
           window.removeEventListener('keydown', onKeyDown);

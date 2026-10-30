@@ -1,16 +1,17 @@
 import { NextResponse } from 'next/server';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getScene } from '@/lib/store';
 import { canRead, sessionUser } from '@/lib/authz';
 import { STORAGE_DIR } from '@/lib/config';
+import { streamFile } from '@/lib/file-response';
 
 /**
  * GET /api/scenes/:sceneId/mesh — stream the collision mesh (invisible proxy).
  * Same access rules as the visual asset. 404 when no mesh has been built yet.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -23,10 +24,5 @@ export async function GET(
   if (!existsSync(path)) {
     return NextResponse.json({ error: 'No collision mesh for this scene yet' }, { status: 404 });
   }
-  return new Response(readFileSync(path), {
-    headers: {
-      'Content-Type': 'model/gltf-binary',
-      'Cache-Control': 'private, max-age=3600',
-    },
-  });
+  return streamFile(path, 'model/gltf-binary', req);
 }

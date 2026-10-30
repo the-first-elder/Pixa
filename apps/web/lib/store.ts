@@ -186,6 +186,55 @@ export function waitingTrainerCount(): number {
   ).length;
 }
 
+const ACTIVE_JOB_STATUSES = new Set<string>([
+  'uploaded', 'queued', 'extracting_frames', 'estimating_camera_poses',
+  'reconstructing', 'compressing', 'building_scene_index',
+]);
+
+/**
+ * Active reconstruction counts for admission control. The GPU trainer is
+ * slot-bound (WL_TRAIN_SLOTS, default 1), but extraction/SfM pipeline
+ * stages run concurrently across users — admission is what keeps one
+ * account from monopolizing the machine while others wait.
+ */
+export function activeReconstructionCounts(ownerId?: string | null): {
+  total: number;
+  owner: number;
+} {
+  const jobs = Object.values(load<ProcessingJob>('jobs.json')).filter(
+    (j) => j.jobType === 'reconstruction' && ACTIVE_JOB_STATUSES.has(j.status),
+  );
+  return {
+    total: jobs.length,
+    owner: ownerId == null
+      ? jobs.filter((j) => j.ownerId == null).length
+      : jobs.filter((j) => j.ownerId === ownerId).length,
+  };
+}
+
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
+}
+
+/**
+ * Admission gate shared by scene + segment process routes. Returns an error
+ * message when the machine is saturated, else null. Per-owner fairness comes
+ * first in the message because that is the actionable limit for the caller.
+ */
+export function reconstructionAdmissionError(ownerId?: string | null): string | null {
+  const maxTotal = envInt('WL_MAX_ACTIVE_JOBS', 6, 1, 50);
+  const maxOwner = envInt('WL_MAX_ACTIVE_JOBS_PER_USER', 2, 1, 10);
+  const counts = activeReconstructionCounts(ownerId);
+  if (counts.owner >= maxOwner) {
+    return `You already have ${counts.owner} reconstruction(s) running. Wait for one to finish before starting another.`;
+  }
+  if (counts.total >= maxTotal) {
+    return `The reconstruction queue is full (${counts.total} active). Try again in a few minutes.`;
+  }
+  return null;
+}
+
 /** Latest job for a scene (for status display). Null when none exists. */
 export function latestJobForScene(sceneId: string): ProcessingJob | null {
   const jobs = Object.values(load<ProcessingJob>('jobs.json'))

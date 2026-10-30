@@ -47,7 +47,7 @@ export default function CaptureRecorder() {
     addEventListener?: (type: string, cb: () => void) => void;
   } | null>(null);
   const [backend, setBackend] = useState('spirula');
-  const [quality, setQuality] = useState('fast');
+  const [quality, setQuality] = useState('balanced');
   const [allowPartial, setAllowPartial] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   // Passes kept for a joined upload ("Keep & record another pass").

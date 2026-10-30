@@ -212,8 +212,16 @@ def extract_frames(video: str, out_dir: str, pipeline: str, fps_override: float 
         cap_note = "analysis frames (1 fps, width ≤1280, never upscaled, capped at 120)"
     elif pipeline == "B":
         fps = fps_override or 2.0
-        vf = f"fps={fps},scale=w='if(gt(iw,2048),2048,iw)':h='-2'"
-        cap_note = f"reconstruction frames ({fps} fps, width ≤2048, never upscaled)"
+        # Bound BOTH dimensions. A width-only cap turns 2160x3840 portrait
+        # into 2048x3640 — gigabytes of interpolated-era pixels that slow
+        # SfM/training without adding capture information. Downscale-only:
+        # smaller sources stay at native resolution (measured best quality).
+        vf = (
+            f"fps={fps},"
+            "scale=w='min(iw,2048)':h='min(ih,2048)'"
+            ":force_original_aspect_ratio=decrease:force_divisible_by=2"
+        )
+        cap_note = f"reconstruction frames ({fps} fps, max dimension ≤2048, never upscaled)"
     else:
         raise MediaError("pipeline must be 'A' or 'B'")
     os.makedirs(out_dir, exist_ok=True)
