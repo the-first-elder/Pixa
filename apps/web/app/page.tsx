@@ -4,7 +4,7 @@ import AuthNav from '@/components/AuthNav';
 import LiveDemo from '@/components/landing/LiveDemo';
 import Reveal from '@/components/landing/Reveal';
 
-const DEMO_SCENE = '/scenes/scene_5abb5015';
+const DEMO_SCENE = '/scenes/scene_48a2bb9e';
 
 export default function Home() {
   return (
@@ -77,7 +77,7 @@ export default function Home() {
               <p className="mt-4 text-xs text-neutral-500">
                 Create your own world — or{' '}
                 <Link href={DEMO_SCENE} className="underline underline-offset-4 hover:text-neutral-300">
-                  open a real reconstructed living room
+                  open a real reconstructed home courtyard
                 </Link>{' '}
                 with no sign-up.
               </p>
@@ -88,20 +88,20 @@ export default function Home() {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/landing/hero-frame.jpg"
-                alt="Phone capture of a living room with sofa, pictures, and fan"
+                alt="Phone capture of a two-storey house courtyard with balcony and satellite dish"
                 className="hero-drift aspect-[4/5] w-full object-cover"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4 pt-10">
                 <div className="flex flex-wrap gap-1.5">
-                  {['sofa', 'television', 'standing fan', 'curtain'].map((t) => (
+                  {['courtyard', 'balcony', 'satellite dish', 'two-storey house'].map((t) => (
                     <span key={t} className="rounded-full border border-white/20 bg-black/60 px-2.5 py-1 text-[11px] text-neutral-200">
                       {t}
                     </span>
                   ))}
                 </div>
-                <figcaption className="mt-2 text-[11px] text-neutral-400">
-                  A real capture. Pixa found and located each tagged object.
-                </figcaption>
+                  <figcaption className="mt-2 text-[11px] text-neutral-400">
+                    A real capture from the demo scene — daylight, sharp, overlap-rich.
+                  </figcaption>
               </div>
             </figure>
           </Reveal>
@@ -120,7 +120,7 @@ export default function Home() {
           <Reveal>
             <figure className="overflow-hidden rounded-xl border border-white/10">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/landing/capture-grid.jpg" alt="Contact sheet of phone frames walking through a room" className="aspect-[4/3] w-full object-cover" loading="lazy" />
+              <img src="/landing/capture-grid.jpg"                 alt="Contact sheet of phone frames walking around a house courtyard" className="aspect-[4/3] w-full object-cover" loading="lazy" />
               <figcaption className="border-t border-white/10 px-4 py-3 text-xs text-neutral-400">
                 <span className="text-[#e2a63b]">01 — Capture.</span> A phone walkthrough; overlapping views of one room.
               </figcaption>
@@ -130,8 +130,8 @@ export default function Home() {
             <div className="flex h-full flex-col justify-center rounded-xl border border-white/10 bg-[#111113] p-6">
               <p className="text-xs uppercase tracking-widest text-neutral-500">02 — Reconstruct</p>
               <ul className="mt-3 space-y-2 text-sm text-neutral-300">
-                <li>Frames extracted, poses estimated</li>
-                <li>150/150 views registered</li>
+                  <li>Frames extracted, poses estimated</li>
+                  <li>323/323 views registered</li>
                 <li>Gaussian splats trained on-device</li>
               </ul>
               <p className="mt-4 text-[11px] text-neutral-500">Real pipeline stages from an actual Pixa scene.</p>
@@ -140,9 +140,9 @@ export default function Home() {
           <Reveal delay={200}>
             <figure className="overflow-hidden rounded-xl border border-white/10">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/landing/room-3d.jpg" alt="The same room rendered as a navigable 3D reconstruction" className="aspect-[4/3] w-full object-cover" loading="lazy" />
+              <img src="/landing/room-3d.jpg"                 alt="The same courtyard pictured in daylight, reconstructed as a navigable 3D space" className="aspect-[4/3] w-full object-cover" loading="lazy" />
               <figcaption className="border-t border-white/10 px-4 py-3 text-xs text-neutral-400">
-                <span className="text-[#e2a63b]">03 — Explore.</span> The actual reconstruction, navigable in a browser.
+                  <span className="text-[#e2a63b]">03 — Explore.</span> This courtyard as a 3D world, navigable in a browser.
               </figcaption>
             </figure>
           </Reveal>

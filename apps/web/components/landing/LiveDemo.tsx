@@ -12,7 +12,7 @@ const Viewer = dynamic(() => import('@/components/SceneViewer'), {
   ),
 });
 
-const DEMO_SCENE = 'scene_5abb5015';
+const DEMO_SCENE = 'scene_48a2bb9e';
 
 /**
  * Live embedded reconstruction: the real Spark viewer running the real demo
@@ -39,7 +39,7 @@ export default function LiveDemo() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/landing/room-3d.jpg"
-              alt="Reconstructed living room — press play to explore it live"
+                alt="Sunlit house courtyard — press play to explore it live in 3D"
               className="h-full w-full object-cover"
               loading="lazy"
             />
@@ -49,7 +49,7 @@ export default function LiveDemo() {
                 ▶
               </span>
               <span className="rounded-full border border-white/20 bg-black/60 px-3 py-1 text-xs text-neutral-200">
-                Live 3D — loads ~25 MB on play
+                  Live 3D — loads ~42 MB on play
               </span>
             </span>
           </button>
