@@ -9,7 +9,7 @@ LOG="${CF_LOG:-/tmp/cf-tunnel.log}"
 : > "$LOG"
 if [ -f "$HOME/.config/pixa/cloudflare.env" ]; then
   # shellcheck disable=SC1090
-  source "$HOME/.config/pixa/cloudflare.env"
+  set -a; source "$HOME/.config/pixa/cloudflare.env"; set +a
 fi
 /opt/homebrew/bin/cloudflared tunnel --url http://localhost:3000 >>"$LOG" 2>&1 &
 TUNNEL_PID=$!
@@ -21,7 +21,11 @@ for _ in $(seq 1 30); do
   fi
 done
 if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-  CF_LOG="$LOG" /bin/bash "$(dirname "$0")/sync-tunnel.sh" >>"$LOG" 2>&1 || true
+  # Run the REPO sync script (it derives repo paths from its own location,
+  # so the ~/.config copy — made by INSTALL.md — pointed at nonexistent dirs.
+  # Reading a script from Documents is fine; only exec'ing one under
+  # Documents fails under launchd, and bash is the interpreter here).
+  CF_LOG="$LOG" /bin/bash "$HOME/Documents/Pixa/scripts/sync-tunnel.sh" >>"$LOG" 2>&1 || true
 else
   echo "no Cloudflare credentials: skipping worker sync (run scripts/sync-tunnel.sh manually)" >>"$LOG"
 fi

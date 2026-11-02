@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface Item {
   id: string;
@@ -134,7 +135,11 @@ export default function NotificationsBell() {
         )}
       </button>
 
-      {open && (
+      {/* Portaled to document.body: the blurred site header (backdrop-filter)
+          otherwise hijacks `fixed` positioning and pins the dialog to the
+          header strip. Same fix as SignInModal. `open` starts false so this
+          only ever runs client-side. */}
+      {open && createPortal(
         <div
           className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-black/70 p-4 pt-[10vh] backdrop-blur-sm"
           onClick={() => setOpen(false)}
@@ -271,7 +276,8 @@ export default function NotificationsBell() {
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

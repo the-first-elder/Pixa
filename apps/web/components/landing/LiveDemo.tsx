@@ -26,9 +26,12 @@ export default function LiveDemo() {
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-800 bg-black">
+      {/* Pinned to the sharpest derived viewpoint (vp_capture_2, wide
+          courtyard): the default first viewpoint stares at the sky and
+          the overview drifts into thin-coverage smear. */}
       <div className="relative h-[320px] md:h-[440px]">
         {live ? (
-          <Viewer sceneId={DEMO_SCENE} drift />
+          <Viewer sceneId={DEMO_SCENE} initialViewpointId="vp_capture_2" drift />
         ) : (
           <button
             type="button"
@@ -60,9 +63,9 @@ export default function LiveDemo() {
           <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />
           Live reconstruction — drag to look around
         </p>
-        <a href={`/scenes/${DEMO_SCENE}`} className="text-xs text-neutral-200 underline underline-offset-4">
-          Open full scene
-        </a>
+          <a href={`/scenes/${DEMO_SCENE}?v=vp_capture_2`} className="text-xs text-neutral-200 underline underline-offset-4">
+            Open full scene
+          </a>
       </div>
     </div>
   );

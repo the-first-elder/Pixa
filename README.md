@@ -7,7 +7,7 @@
 > measured geometry. Every external answer carries its sources.
 
 [![CI](https://github.com/the-first-elder/Pixa/actions/workflows/ci.yml/badge.svg)](https://github.com/the-first-elder/Pixa/actions/workflows/ci.yml)
-**Live demo (no sign-up):** https://pixa.autumn-test.workers.dev/scenes/scene_48a2bb9e
+<!-- **Live demo (no sign-up):** https://pixa.autumn-test.workers.dev/scenes/scene_48a2bb9e -->
 
 ![A real phone capture, indexed by Pixa](apps/web/public/landing/hero-frame.jpg)
 

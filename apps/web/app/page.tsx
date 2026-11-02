@@ -4,7 +4,9 @@ import AuthNav from '@/components/AuthNav';
 import LiveDemo from '@/components/landing/LiveDemo';
 import Reveal from '@/components/landing/Reveal';
 
-const DEMO_SCENE = '/scenes/scene_48a2bb9e';
+// Pinned to the scene's sharpest viewpoint (wide courtyard) so every demo
+// entry point opens on the clearest view, not the default sky-stare.
+const DEMO_SCENE = '/scenes/scene_48a2bb9e?v=vp_capture_2';
 
 export default function Home() {
   return (
